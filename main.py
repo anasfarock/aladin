@@ -52,14 +52,21 @@ CONFIG = {
     'end': '2024-12-31',         # Fixed end date to be more realistic
     'capital': 10000.0,          # used for backtest or initial capital
     'risk_pct': 0.5,             # percent risk per trade (0.5%)
-    'timeframe_entry': 'M5',     # timeframe used to simulate entries in backtest
-    'trend_timeframes': ['D1', 'H4'],
+    'timeframe_entry': 'M15',     # timeframe used to simulate entries in backtest
+    'trend_timeframes': ['D1', 'H4', 'H1'],  # timeframes used for trend determination
     'boll_period': 20,
     'boll_std': 2,
     'rsi_period': 14,
     'vwap_period': 20,           # VWAP window (we'll compute rolling VWAP using typical price*volume)
     'max_concurrent_trades': 1,   # Maximum number of open positions
     'min_bars_required': 50,     # Minimum bars required for indicators
+    'trailing_stop': True,       # Enable trailing stop loss
+    'trailing_levels': {         # Trailing stop levels (profit_ratio: trail_to_ratio)
+        1.0: 0.5,   # At 1:1 RR, move SL to 0.5:1 profit
+        2.0: 1.0,   # At 2:1 RR, move SL to 1:1 profit  
+        3.0: 1.5,   # At 3:1 RR, move SL to 1.5:1 profit
+        4.0: 2.0,   # At 4:1 RR, move SL to 2:1 profit
+    }
 }
 
 # Map timeframe strings to MT5 constants - Fixed mapping
@@ -270,6 +277,67 @@ def entry_signal(df):
     
     return None
 
+# ----------------------- TRAILING STOP FUNCTIONS -----------------------
+
+def update_trailing_stop(position, current_price):
+    """Update trailing stop loss based on profit levels"""
+    if not CONFIG['trailing_stop']:
+        return position
+    
+    entry_price = position['entry']
+    original_stop = position['original_stop']  # Keep track of original stop
+    current_stop = position['stop']
+    side = position['side']
+    
+    # Calculate initial risk
+    if side == 'long':
+        initial_risk = entry_price - original_stop
+        current_profit = current_price - entry_price
+    else:  # short
+        initial_risk = original_stop - entry_price
+        current_profit = entry_price - current_price
+    
+    if initial_risk <= 0 or current_profit <= 0:
+        return position  # No profit yet or invalid risk
+    
+    # Calculate current profit in terms of risk ratio
+    profit_ratio = current_profit / initial_risk
+    
+    # Find the highest applicable trailing level
+    applicable_level = None
+    trail_to_ratio = None
+    
+    for level, trail_ratio in sorted(CONFIG['trailing_levels'].items(), reverse=True):
+        if profit_ratio >= level:
+            applicable_level = level
+            trail_to_ratio = trail_ratio
+            break
+    
+    if applicable_level is None:
+        return position  # No trailing level reached yet
+    
+    # Calculate new stop price
+    if side == 'long':
+        new_stop = entry_price + (trail_to_ratio * initial_risk)
+        # Only move stop up, never down
+        if new_stop > current_stop:
+            position['stop'] = new_stop
+            position['trailing_active'] = True
+            position['trail_level'] = applicable_level
+            logger.debug(f"Long trailing stop updated: {current_stop:.5f} -> {new_stop:.5f} "
+                        f"(profit: {profit_ratio:.2f}R, trailing to: {trail_to_ratio:.1f}R)")
+    else:  # short
+        new_stop = entry_price - (trail_to_ratio * initial_risk)
+        # Only move stop down, never up
+        if new_stop < current_stop:
+            position['stop'] = new_stop
+            position['trailing_active'] = True
+            position['trail_level'] = applicable_level
+            logger.debug(f"Short trailing stop updated: {current_stop:.5f} -> {new_stop:.5f} "
+                        f"(profit: {profit_ratio:.2f}R, trailing to: {trail_to_ratio:.1f}R)")
+    
+    return position
+
 # ----------------------- DATA FETCHING -----------------------
 
 def ensure_mt5_initialized():
@@ -391,14 +459,22 @@ def backtest(symbol, start, end, timeframe):
         if d1_slice.empty or h4_slice.empty:
             continue
         
-        # Check existing positions for exits
+        # Check existing positions for exits and trailing stops
         for pos in open_positions[:]:  # Create copy for safe iteration
+            # Update trailing stop first
+            if CONFIG['trailing_stop']:
+                current_price = current['close']  # Use close price for trailing calculations
+                pos = update_trailing_stop(pos, current_price)
+            
             if pos['side'] == 'long':
                 # Check stop loss (low <= stop)
                 if current['low'] <= pos['stop']:
                     exit_price = pos['stop']
                     pl = (exit_price - pos['entry']) * pos['units']
                     balance += pl
+                    
+                    exit_reason = 'trailing_stop' if pos.get('trailing_active', False) else 'stop_loss'
+                    
                     trades.append({
                         'entry_time': pos['entry_time'],
                         'exit_time': current_time,
@@ -406,7 +482,8 @@ def backtest(symbol, start, end, timeframe):
                         'entry': pos['entry'],
                         'exit': exit_price,
                         'pl': pl,
-                        'exit_reason': 'stop_loss'
+                        'exit_reason': exit_reason,
+                        'trail_level': pos.get('trail_level', None)
                     })
                     open_positions.remove(pos)
                     continue
@@ -423,7 +500,8 @@ def backtest(symbol, start, end, timeframe):
                         'entry': pos['entry'],
                         'exit': exit_price,
                         'pl': pl,
-                        'exit_reason': 'take_profit'
+                        'exit_reason': 'take_profit',
+                        'trail_level': pos.get('trail_level', None)
                     })
                     open_positions.remove(pos)
                     continue
@@ -434,6 +512,9 @@ def backtest(symbol, start, end, timeframe):
                     exit_price = pos['stop']
                     pl = (pos['entry'] - exit_price) * pos['units']
                     balance += pl
+                    
+                    exit_reason = 'trailing_stop' if pos.get('trailing_active', False) else 'stop_loss'
+                    
                     trades.append({
                         'entry_time': pos['entry_time'],
                         'exit_time': current_time,
@@ -441,7 +522,8 @@ def backtest(symbol, start, end, timeframe):
                         'entry': pos['entry'],
                         'exit': exit_price,
                         'pl': pl,
-                        'exit_reason': 'stop_loss'
+                        'exit_reason': exit_reason,
+                        'trail_level': pos.get('trail_level', None)
                     })
                     open_positions.remove(pos)
                     continue
@@ -458,7 +540,8 @@ def backtest(symbol, start, end, timeframe):
                         'entry': pos['entry'],
                         'exit': exit_price,
                         'pl': pl,
-                        'exit_reason': 'take_profit'
+                        'exit_reason': 'take_profit',
+                        'trail_level': pos.get('trail_level', None)
                     })
                     open_positions.remove(pos)
                     continue
@@ -516,8 +599,11 @@ def backtest(symbol, start, end, timeframe):
             'side': signal,
             'entry': entry_price,
             'stop': stop_price,
+            'original_stop': stop_price,  # Keep track of original stop for trailing calculations
             'tp': tp,
-            'units': units
+            'units': units,
+            'trailing_active': False,
+            'trail_level': None
         }
         
         open_positions.append(position)
@@ -541,7 +627,8 @@ def backtest(symbol, start, end, timeframe):
             'entry': pos['entry'],
             'exit': final_price,
             'pl': pl,
-            'exit_reason': 'backtest_end'
+            'exit_reason': 'backtest_end',
+            'trail_level': pos.get('trail_level', None)
         })
     
     # Create results
@@ -561,11 +648,16 @@ def backtest(symbol, start, end, timeframe):
         profit_factor = abs(trades_df[trades_df['pl'] > 0]['pl'].sum() / 
                            trades_df[trades_df['pl'] <= 0]['pl'].sum()) if losses > 0 else float('inf')
         
+        trailing_stops = len(trades_df[trades_df['exit_reason'] == 'trailing_stop']) if total_trades > 0 else 0
+        take_profits = len(trades_df[trades_df['exit_reason'] == 'take_profit']) if total_trades > 0 else 0
+        stop_losses = len(trades_df[trades_df['exit_reason'] == 'stop_loss']) if total_trades > 0 else 0
+        
         max_dd = calculate_max_drawdown(trades_df['pl'].cumsum() + CONFIG['capital'])
         
     else:
         wins = losses = 0
         win_rate = avg_win = avg_loss = profit_factor = total_profit = max_dd = 0
+        trailing_stops = take_profits = stop_losses = 0
     
     summary = {
         'starting_balance': CONFIG['capital'],
@@ -579,7 +671,10 @@ def backtest(symbol, start, end, timeframe):
         'avg_loss': avg_loss,
         'profit_factor': profit_factor,
         'max_drawdown': max_dd,
-        'return_pct': (balance - CONFIG['capital']) / CONFIG['capital'] * 100
+        'return_pct': (balance - CONFIG['capital']) / CONFIG['capital'] * 100,
+        'trailing_stops': trailing_stops,
+        'take_profits': take_profits,
+        'stop_losses': stop_losses
     }
     
     print('\n' + '='*50)
@@ -682,8 +777,117 @@ def place_market_order(symbol, side, volume, sl, tp):
     result = mt5.order_send(request)
     return result
 
+def update_live_trailing_stop(position_ticket, symbol, new_sl):
+    """Update stop loss for live position via MT5"""
+    try:
+        # Get current position info
+        positions = mt5.positions_get(ticket=position_ticket)
+        if not positions:
+            logger.error(f"Position {position_ticket} not found")
+            return False
+        
+        position = positions[0]
+        
+        # Prepare modification request
+        request = {
+            'action': mt5.TRADE_ACTION_SLTP,
+            'symbol': symbol,
+            'position': position_ticket,
+            'sl': new_sl,
+            'tp': position.tp,  # Keep existing TP
+        }
+        
+        result = mt5.order_send(request)
+        
+        if result.retcode == mt5.TRADE_RETCODE_DONE:
+            logger.info(f"Trailing stop updated for position {position_ticket}: SL = {new_sl:.5f}")
+            return True
+        else:
+            logger.error(f"Failed to update trailing stop: {result.retcode} - {result.comment}")
+            return False
+            
+    except Exception as e:
+        logger.error(f"Error updating trailing stop: {e}")
+        return False
+
+def monitor_live_positions():
+    """Monitor and update trailing stops for live positions"""
+    if not CONFIG['trailing_stop']:
+        return
+    
+    try:
+        positions = mt5.positions_get(symbol=CONFIG['symbol'])
+        if not positions:
+            return
+        
+        for position in positions:
+            # Check if this is our bot's position (by magic number)
+            if position.magic != 234000:
+                continue
+            
+            symbol = position.symbol
+            ticket = position.ticket
+            entry_price = position.price_open
+            current_sl = position.sl
+            current_tp = position.tp
+            volume = position.volume
+            position_type = position.type
+            
+            # Get current price
+            tick = mt5.symbol_info_tick(symbol)
+            if not tick:
+                continue
+            
+            current_price = tick.bid if position_type == mt5.POSITION_TYPE_BUY else tick.ask
+            
+            # Calculate if we need to update trailing stop
+            is_long = position_type == mt5.POSITION_TYPE_BUY
+            
+            if is_long:
+                # For long positions, calculate profit from entry
+                profit_points = current_price - entry_price
+                original_risk = entry_price - current_sl  # Assuming current SL is original
+            else:
+                # For short positions
+                profit_points = entry_price - current_price
+                original_risk = current_sl - entry_price  # Assuming current SL is original
+            
+            if original_risk <= 0 or profit_points <= 0:
+                continue  # No profit yet or invalid setup
+            
+            # Calculate profit ratio
+            profit_ratio = profit_points / original_risk
+            
+            # Find applicable trailing level
+            new_sl = None
+            for level, trail_ratio in sorted(CONFIG['trailing_levels'].items(), reverse=True):
+                if profit_ratio >= level:
+                    if is_long:
+                        calculated_sl = entry_price + (trail_ratio * original_risk)
+                        # Only move SL up
+                        if calculated_sl > current_sl:
+                            new_sl = calculated_sl
+                    else:
+                        calculated_sl = entry_price - (trail_ratio * original_risk)
+                        # Only move SL down
+                        if calculated_sl < current_sl:
+                            new_sl = calculated_sl
+                    break
+            
+            # Update if needed
+            if new_sl is not None:
+                logger.info(f"Updating trailing stop for {symbol} position {ticket}: "
+                           f"{current_sl:.5f} -> {new_sl:.5f} (profit: {profit_ratio:.2f}R)")
+                update_live_trailing_stop(ticket, symbol, new_sl)
+    
+    except Exception as e:
+        logger.error(f"Error monitoring positions: {e}")
+
 def live_run_once():
     """Execute one live trading cycle"""
+    # First, monitor existing positions for trailing stops
+    monitor_live_positions()
+    
     symbol = CONFIG['symbol']
     
     # Fetch current data
@@ -780,6 +984,16 @@ def main():
                 print(f'\nSample trades (first 10):')
                 print(trades.head(10).to_string(index=False))
                 
+                # Show trailing stop statistics if enabled
+                if CONFIG['trailing_stop']:
+                    trailing_count = len(trades[trades['exit_reason'] == 'trailing_stop'])
+                    print(f'\nTrailing Stop Performance:')
+                    print(f'Trades closed by trailing stop: {trailing_count}')
+                    if trailing_count > 0:
+                        trailing_trades = trades[trades['exit_reason'] == 'trailing_stop']
+                        avg_trailing_profit = trailing_trades['pl'].mean()
+                        print(f'Average trailing stop profit: {avg_trailing_profit:.2f}')
+                
                 # Save trades to CSV
                 filename = f"backtest_results_{CONFIG['symbol']}_{CONFIG['start']}_{CONFIG['end']}.csv"
                 trades.to_csv(filename, index=False)
@@ -807,14 +1021,18 @@ def main():
         raise
 
 def run_live_bot(interval_seconds=60):
-    """Run live bot in continuous mode"""
+    """Run live bot in continuous mode with trailing stop monitoring"""
     logger.info(f'Starting continuous live trading (interval: {interval_seconds}s)...')
+    logger.info(f'Trailing stops enabled: {CONFIG["trailing_stop"]}')
+    if CONFIG['trailing_stop']:
+        logger.info(f'Trailing levels: {CONFIG["trailing_levels"]}')
+    
     connect_mt5()
     
     try:
         while True:
             try:
-                live_run_once()
+                live_run_once()  # This now includes position monitoring
                 logger.info(f'Sleeping for {interval_seconds} seconds...')
                 time.sleep(interval_seconds)
             except KeyboardInterrupt:
