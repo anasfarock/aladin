@@ -1,27 +1,12 @@
 """
-MT5 Trading Bot + Backtester - Optimized Version
+Enhanced MT5 Trading Bot with ICT Fibonacci Strategy + Trend Analysis
 
 Features:
-- Connects to MetaTrader5 (live) or runs a historical backtest.
-- Strategy:
-  - Trend determined by RSI, VWAP, MA(9) & MA(18) on 1D and 4H timeframes (simple voting rule).
-  - Entries are taken when price interacts with Bollinger Bands (SMA basis, length=20).
-  - Trades only executed in direction of trend. If entry signal is opposite, skip.
-  - Stop loss placed at the Bollinger Band side (lower band for long / upper band for short).
-  - Take profit = min( 3 * risk_distance, opposite Bollinger band ).
-  - If opposite Bollinger band is hit, trade closes.
-  - Risk per trade = 0.5% of account capital (configurable).
-
-Usage:
-- Edit CONFIG section to set symbol, timeframes, and whether to run backtest or live.
-- Backtest: specify start/end dates and historical timeframe for entries (e.g., 1H/4H).
-- Live: requires MetaTrader5 terminal running and logged in. Install MetaTrader5 package:
-    pip install MetaTrader5 pandas numpy
-
-Notes & Limitations:
-- This is a reference implementation. Always paper-test on demo accounts before using live.
-- Lot-sizing logic is approximate — broker-specific contract sizes, pip definitions, and margin rules vary.
-- The bot places MARKET orders via MT5; modify as needed for limit/stop entries.
+- Trend Analysis: RSI, VWAP, Bollinger Bands, Moving Averages on multiple timeframes
+- Entry Strategy: ICT Fibonacci Retracements (0.618, 0.705, 0.786 levels)
+- Risk Management: Dynamic stop loss, take profit, and trailing stops
+- Backtesting: Historical simulation with detailed performance metrics
+- Live Trading: Real-time execution with MT5 integration
 """
 
 import time
@@ -30,6 +15,7 @@ from datetime import datetime, timedelta
 import pandas as pd
 import numpy as np
 import logging
+from typing import Dict, List, Optional, Tuple
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -47,34 +33,49 @@ except ImportError:
 # ----------------------------- CONFIG -----------------------------
 CONFIG = {
     'symbol': 'EURUSD.raw',
-    'backtest': True,            # True = backtest mode, False = live trading
+    'backtest': True,
     'start': '2024-06-22',
-    'end': '2024-12-31',         # Fixed end date to be more realistic
-    'capital': 10000.0,          # used for backtest or initial capital
-    'risk_pct': 0.5,             # percent risk per trade (0.5%)
-    'timeframe_entry': 'M15',     # timeframe used to simulate entries in backtest
-    'trend_timeframes': ['D1', 'H4', 'H1'],  # timeframes used for trend determination
+    'end': '2024-12-31',
+    'capital': 10000.0,
+    'risk_pct': 0.5,
+    'timeframe_entry': 'M15',
+    'trend_timeframes': ['D1', 'H4', 'H1'],
+    
     'boll_period': 20,
     'boll_std': 2,
     'rsi_period': 14,
-    'vwap_period': 20,           # VWAP window (we'll compute rolling VWAP using typical price*volume)
-    'max_concurrent_trades': 1,   # Maximum number of open positions
-    'min_bars_required': 50,     # Minimum bars required for indicators
-    'trailing_stop': True,       # Enable trailing stop loss
-    'trailing_levels': {         # Trailing stop levels (profit_ratio: trail_to_ratio)
-        1.0: 0.5,   # At 1:1 RR, move SL to 0.5:1 profit
-        2.0: 1.0,   # At 2:1 RR, move SL to 1:1 profit  
-        3.0: 1.5,   # At 3:1 RR, move SL to 1.5:1 profit
-        4.0: 2.0,   # At 4:1 RR, move SL to 2:1 profit
-    }
+    'vwap_period': 20,
+    'ma_fast': 9,
+    'ma_slow': 18,
+    
+    'use_rsi_for_trend': False,
+    'use_vwap_for_trend': False,
+    'use_bollinger_for_trend': False,
+    'use_ma_for_trend': True,
+    
+    'fib_lookback': 30,
+    'fib_levels': [0.618, 0.705, 0.786],
+    'fib_tolerance': 0.0001,
+    'min_swing_size': 0.0005,
+    'max_fib_age': 100,
+    'fib_confirmation_bars': 2,
+    
+    'max_concurrent_trades': 1,
+    'min_bars_required': 50,
+    'trailing_stop': True,
+    'trailing_levels': {
+        1.0: 0.5,
+        2.0: 1.0,
+        3.0: 1.5,
+        4.0: 2.0,
+    },
+    'min_rr_ratio': 1.5,
 }
 
-# Map timeframe strings to MT5 constants - Fixed mapping
 def get_mt5_timeframes():
-    """Get MT5 timeframes mapping with proper error handling"""
+    """Get MT5 timeframes mapping"""
     if not MT5_AVAILABLE:
         return {}
-    
     return {
         'M1': mt5.TIMEFRAME_M1,
         'M5': mt5.TIMEFRAME_M5,
@@ -92,7 +93,7 @@ MT5_TIMEFRAMES = get_mt5_timeframes()
 def validate_config():
     """Validate configuration settings"""
     if not MT5_AVAILABLE and not CONFIG['backtest']:
-        raise RuntimeError("MT5 not available for live trading. Set backtest=True or install MetaTrader5")
+        raise RuntimeError("MT5 not available for live trading")
     
     if CONFIG['timeframe_entry'] not in MT5_TIMEFRAMES:
         raise ValueError(f"Unsupported entry timeframe: {CONFIG['timeframe_entry']}")
@@ -101,20 +102,29 @@ def validate_config():
         if tf not in MT5_TIMEFRAMES:
             raise ValueError(f"Unsupported trend timeframe: {tf}")
     
-    # Validate dates
-    try:
-        start_date = datetime.fromisoformat(CONFIG['start'])
-        end_date = datetime.fromisoformat(CONFIG['end'])
-        if start_date >= end_date:
-            raise ValueError("Start date must be before end date")
-    except ValueError as e:
-        raise ValueError(f"Invalid date format: {e}")
+    trend_indicators_enabled = [
+        CONFIG['use_ma_for_trend'],
+        CONFIG['use_rsi_for_trend'],
+        CONFIG['use_vwap_for_trend'],
+        CONFIG['use_bollinger_for_trend']
+    ]
+    
+    if not any(trend_indicators_enabled):
+        logger.warning("No trend indicators enabled!")
+    
+    enabled_indicators = []
+    if CONFIG['use_ma_for_trend']:
+        enabled_indicators.append('Moving Averages')
+    if CONFIG['use_rsi_for_trend']:
+        enabled_indicators.append('RSI')
+    if CONFIG['use_vwap_for_trend']:
+        enabled_indicators.append('VWAP')
+    if CONFIG['use_bollinger_for_trend']:
+        enabled_indicators.append('Bollinger Bands')
+    
+    logger.info(f"Trend analysis using: {', '.join(enabled_indicators) if enabled_indicators else 'None'}")
 
-def to_datetime(ts):
-    """Convert timestamp to datetime"""
-    if isinstance(ts, (int, float)):
-        return datetime.utcfromtimestamp(ts)
-    return ts
+# --------------------------- TECHNICAL INDICATORS ----------------------------
 
 def sma(series, length):
     """Simple Moving Average"""
@@ -135,24 +145,19 @@ def rsi(series, length=14):
     ma_up = up.ewm(com=length-1, adjust=False).mean()
     ma_down = down.ewm(com=length-1, adjust=False).mean()
     
-    # Avoid division by zero
     ma_down = ma_down.replace(0, np.nan)
     rs = ma_up / ma_down
     rsi_values = 100 - (100 / (1 + rs))
-    
-    # Handle edge cases
-    rsi_values = rsi_values.fillna(50)  # Neutral RSI for NaN values
+    rsi_values = rsi_values.fillna(50)
     return rsi_values
 
 def vwap(df, length=None):
     """Volume Weighted Average Price"""
     if 'tick_volume' not in df.columns:
-        logger.warning("tick_volume not found, using equal weights for VWAP")
+        logger.warning("tick_volume not found, using equal weights")
         df['tick_volume'] = 1
     
-    # Replace zero or negative volumes
     df['tick_volume'] = df['tick_volume'].replace(0, 1)
-    
     tp = (df['high'] + df['low'] + df['close']) / 3
     pv = tp * df['tick_volume']
     
@@ -163,8 +168,6 @@ def vwap(df, length=None):
     else:
         pv_roll = pv.rolling(window=length, min_periods=1).sum()
         v_roll = df['tick_volume'].rolling(window=length, min_periods=1).sum()
-        
-        # Avoid division by zero
         v_roll = v_roll.replace(0, 1)
         return pv_roll / v_roll
 
@@ -176,8 +179,6 @@ def bollinger_bands(series, length=20, stddev=2):
     lower = basis - stddev * sd
     return basis, upper, lower
 
-# ----------------------- STRATEGY / SIGNALS -----------------------
-
 def compute_indicators(df):
     """Compute all technical indicators"""
     if df.empty or len(df) < CONFIG['min_bars_required']:
@@ -186,16 +187,14 @@ def compute_indicators(df):
     
     df = df.copy()
     
-    # Ensure required columns exist
     required_cols = ['open', 'high', 'low', 'close']
     for col in required_cols:
         if col not in df.columns:
-            raise ValueError(f"Required column '{col}' not found in data")
+            raise ValueError(f"Required column '{col}' not found")
     
-    # Compute indicators with error handling
     try:
-        df['ma9'] = sma(df['close'], 9)
-        df['ma18'] = sma(df['close'], 18)
+        df['ma_fast'] = sma(df['close'], CONFIG['ma_fast'])
+        df['ma_slow'] = sma(df['close'], CONFIG['ma_slow'])
         df['rsi'] = rsi(df['close'], CONFIG['rsi_period'])
         df['vwap'] = vwap(df, CONFIG['vwap_period'])
         df['bb_basis'], df['bb_upper'], df['bb_lower'] = bollinger_bands(
@@ -207,103 +206,289 @@ def compute_indicators(df):
     
     return df
 
-def determine_trend(df_d1, df_h4):
-    """Return 'long', 'short', or 'neutral' based on voting system"""
-    if df_d1.empty or df_h4.empty:
-        return 'neutral'
-    
-    votes = 0
-    
-    for df_name, df in [('D1', df_d1), ('H4', df_h4)]:
-        if len(df) == 0:
-            continue
-            
-        last = df.iloc[-1]
-        timeframe_votes = 0
-        
-        # MA vote (bullish if MA9 > MA18)
-        if not (pd.isna(last['ma9']) or pd.isna(last['ma18'])):
-            ma_vote = 1 if last['ma9'] > last['ma18'] else -1
-            timeframe_votes += ma_vote
-        
-        # RSI vote (bullish > 55, bearish < 45, neutral between)
-        if not pd.isna(last['rsi']):
-            if last['rsi'] > 55:
-                rsi_vote = 1
-            elif last['rsi'] < 45:
-                rsi_vote = -1
-            else:
-                rsi_vote = 0
-            timeframe_votes += rsi_vote
-        
-        # VWAP vote (bullish if price > VWAP)
-        if not pd.isna(last['vwap']):
-            vwap_vote = 1 if last['close'] > last['vwap'] else -1
-            timeframe_votes += vwap_vote
-        
-        votes += timeframe_votes
-        logger.debug(f"{df_name} timeframe votes: {timeframe_votes}")
-    
-    logger.debug(f"Total trend votes: {votes}")
-    
-    if votes > 0:
-        return 'long'
-    elif votes < 0:
-        return 'short'
-    else:
-        return 'neutral'
+# --------------------------- ICT FIBONACCI ----------------------------
 
-def entry_signal(df):
-    """Detect Bollinger Band touches for entry signals"""
-    if df.empty or len(df) < 2:
+def identify_swing_points(df, lookback=10):
+    """Identify swing highs and lows"""
+    if len(df) < lookback * 2 + 1:
+        return []
+    
+    swing_points = []
+    
+    for i in range(lookback, len(df) - lookback):
+        current_high = df.iloc[i]['high']
+        current_low = df.iloc[i]['low']
+        
+        is_swing_high = True
+        for j in range(i - lookback, i + lookback + 1):
+            if j != i and df.iloc[j]['high'] > current_high:
+                is_swing_high = False
+                break
+        
+        if is_swing_high:
+            swing_points.append({
+                'index': i,
+                'time': df.iloc[i]['time'],
+                'price': current_high,
+                'type': 'high'
+            })
+        
+        is_swing_low = True
+        for j in range(i - lookback, i + lookback + 1):
+            if j != i and df.iloc[j]['low'] < current_low:
+                is_swing_low = False
+                break
+        
+        if is_swing_low:
+            swing_points.append({
+                'index': i,
+                'time': df.iloc[i]['time'],
+                'price': current_low,
+                'type': 'low'
+            })
+    
+    return swing_points
+
+def calculate_fibonacci_levels(high_price, low_price, direction='bullish'):
+    """Calculate Fibonacci retracement levels"""
+    price_range = high_price - low_price
+    
+    if abs(price_range) < CONFIG['min_swing_size']:
         return None
     
-    last = df.iloc[-1]
-    prev = df.iloc[-2]
+    fib_levels = {}
     
-    # Check if we have valid BB values
-    if any(pd.isna([last['bb_lower'], last['bb_upper'], prev['bb_lower'], prev['bb_upper']])):
+    if direction == 'bullish':
+        for level in CONFIG['fib_levels']:
+            fib_levels[level] = high_price - (price_range * level)
+    else:
+        for level in CONFIG['fib_levels']:
+            fib_levels[level] = low_price + (price_range * level)
+    
+    return fib_levels
+
+def find_fibonacci_setups(df, swing_points):
+    """Find valid Fibonacci setups"""
+    if len(swing_points) < 2:
+        return []
+    
+    fib_setups = []
+    current_index = len(df) - 1
+    swing_points = sorted(swing_points, key=lambda x: x['index'])
+    
+    for i in range(len(swing_points) - 1):
+        for j in range(i + 1, len(swing_points)):
+            point1 = swing_points[i]
+            point2 = swing_points[j]
+            
+            if current_index - point2['index'] > CONFIG['max_fib_age']:
+                continue
+            
+            if point1['type'] == 'low' and point2['type'] == 'high':
+                high_price = point2['price']
+                low_price = point1['price']
+                fib_levels = calculate_fibonacci_levels(high_price, low_price, 'bullish')
+                
+                if fib_levels:
+                    fib_setups.append({
+                        'type': 'bullish_retracement',
+                        'swing_low': point1,
+                        'swing_high': point2,
+                        'fib_levels': fib_levels,
+                        'age': current_index - point2['index'],
+                        'valid': True,
+                        'tested_levels': set()
+                    })
+            
+            elif point1['type'] == 'high' and point2['type'] == 'low':
+                high_price = point1['price']
+                low_price = point2['price']
+                fib_levels = calculate_fibonacci_levels(high_price, low_price, 'bearish')
+                
+                if fib_levels:
+                    fib_setups.append({
+                        'type': 'bearish_retracement',
+                        'swing_high': point1,
+                        'swing_low': point2,
+                        'fib_levels': fib_levels,
+                        'age': current_index - point2['index'],
+                        'valid': True,
+                        'tested_levels': set()
+                    })
+    
+    return fib_setups
+
+def check_fibonacci_reaction(df, fib_setup, current_index):
+    """Check if price is reacting at Fibonacci levels"""
+    if current_index < CONFIG['fib_confirmation_bars']:
         return None
     
-    # Long signal: price touches or crosses below lower BB
-    if (last['close'] <= last['bb_lower'] or 
-        (prev['close'] > prev['bb_lower'] and last['low'] <= last['bb_lower'])):
-        return 'long'
+    recent_bars = df.iloc[max(0, current_index - CONFIG['fib_confirmation_bars']):current_index + 1]
+    current_bar = df.iloc[current_index]
     
-    # Short signal: price touches or crosses above upper BB  
-    if (last['close'] >= last['bb_upper'] or
-        (prev['close'] < prev['bb_upper'] and last['high'] >= last['bb_upper'])):
-        return 'short'
+    fib_levels = fib_setup['fib_levels']
+    setup_type = fib_setup['type']
+    
+    for level_value, fib_price in fib_levels.items():
+        if level_value in fib_setup['tested_levels']:
+            continue
+        
+        price_touched = False
+        for _, bar in recent_bars.iterrows():
+            if abs(bar['low'] - fib_price) <= CONFIG['fib_tolerance'] or \
+               abs(bar['high'] - fib_price) <= CONFIG['fib_tolerance'] or \
+               (bar['low'] <= fib_price <= bar['high']):
+                price_touched = True
+                break
+        
+        if not price_touched:
+            continue
+        
+        fib_setup['tested_levels'].add(level_value)
+        
+        if setup_type == 'bullish_retracement':
+            if (current_bar['close'] > fib_price and 
+                any(bar['low'] <= fib_price + CONFIG['fib_tolerance'] for _, bar in recent_bars.iterrows())):
+                
+                return {
+                    'type': 'long',
+                    'fib_level': level_value,
+                    'fib_price': fib_price,
+                    'entry_price': current_bar['close'],
+                    'setup': fib_setup
+                }
+        
+        elif setup_type == 'bearish_retracement':
+            if (current_bar['close'] < fib_price and 
+                any(bar['high'] >= fib_price - CONFIG['fib_tolerance'] for _, bar in recent_bars.iterrows())):
+                
+                return {
+                    'type': 'short',
+                    'fib_level': level_value,
+                    'fib_price': fib_price,
+                    'entry_price': current_bar['close'],
+                    'setup': fib_setup
+                }
     
     return None
 
-# ----------------------- TRAILING STOP FUNCTIONS -----------------------
+# --------------------------- TREND ANALYSIS ----------------------------
+
+def determine_trend(df_d1, df_h4, df_h1):
+    """Determine overall trend"""
+    if df_d1.empty or df_h4.empty or df_h1.empty:
+        return 'neutral'
+    
+    timeframe_data = [('D1', df_d1), ('H4', df_h4), ('H1', df_h1)]
+    total_votes = 0
+    timeframe_weights = {'D1': 3, 'H4': 2, 'H1': 1}
+    
+    total_indicators_enabled = sum([
+        CONFIG['use_ma_for_trend'],
+        CONFIG['use_rsi_for_trend'],
+        CONFIG['use_vwap_for_trend'],
+        CONFIG['use_bollinger_for_trend']
+    ])
+    
+    if total_indicators_enabled == 0:
+        return 'neutral'
+    
+    for tf_name, df in timeframe_data:
+        if len(df) == 0:
+            continue
+        
+        last = df.iloc[-1]
+        tf_votes = 0
+        weight = timeframe_weights[tf_name]
+        
+        if CONFIG['use_ma_for_trend'] and not (pd.isna(last['ma_fast']) or pd.isna(last['ma_slow'])):
+            ma_vote = 1 if last['ma_fast'] > last['ma_slow'] else -1
+            tf_votes += ma_vote
+        
+        if CONFIG['use_rsi_for_trend'] and not pd.isna(last['rsi']):
+            if last['rsi'] > 60:
+                rsi_vote = 1
+            elif last['rsi'] < 40:
+                rsi_vote = -1
+            else:
+                rsi_vote = 0
+            tf_votes += rsi_vote
+        
+        if CONFIG['use_vwap_for_trend'] and not pd.isna(last['vwap']):
+            vwap_vote = 1 if last['close'] > last['vwap'] else -1
+            tf_votes += vwap_vote
+        
+        if (CONFIG['use_bollinger_for_trend'] and 
+            not (pd.isna(last['bb_upper']) or pd.isna(last['bb_lower']) or pd.isna(last['bb_basis']))):
+            if last['close'] > last['bb_basis']:
+                bb_vote = 1
+            elif last['close'] < last['bb_basis']:
+                bb_vote = -1
+            else:
+                bb_vote = 0
+            tf_votes += bb_vote
+        
+        weighted_votes = tf_votes * weight
+        total_votes += weighted_votes
+    
+    threshold = max(2, total_indicators_enabled)
+    
+    if total_votes > threshold:
+        return 'bullish'
+    elif total_votes < -threshold:
+        return 'bearish'
+    else:
+        return 'neutral'
+
+def check_fibonacci_entry(fib_setups, df, current_index, trend):
+    """Check for Fibonacci entry signals"""
+    if not fib_setups:
+        return None
+    
+    for setup in fib_setups:
+        if not setup['valid']:
+            continue
+        
+        fib_reaction = check_fibonacci_reaction(df, setup, current_index)
+        
+        if fib_reaction is None:
+            continue
+        
+        signal_type = fib_reaction['type']
+        
+        if trend == 'bullish' and signal_type != 'long':
+            continue
+        elif trend == 'bearish' and signal_type != 'short':
+            continue
+        
+        return fib_reaction
+    
+    return None
+
+# --------------------------- TRAILING STOPS ----------------------------
 
 def update_trailing_stop(position, current_price):
-    """Update trailing stop loss based on profit levels"""
+    """Update trailing stop loss"""
     if not CONFIG['trailing_stop']:
         return position
     
     entry_price = position['entry']
-    original_stop = position['original_stop']  # Keep track of original stop
+    original_stop = position['original_stop']
     current_stop = position['stop']
     side = position['side']
     
-    # Calculate initial risk
     if side == 'long':
         initial_risk = entry_price - original_stop
         current_profit = current_price - entry_price
-    else:  # short
+    else:
         initial_risk = original_stop - entry_price
         current_profit = entry_price - current_price
     
     if initial_risk <= 0 or current_profit <= 0:
-        return position  # No profit yet or invalid risk
+        return position
     
-    # Calculate current profit in terms of risk ratio
     profit_ratio = current_profit / initial_risk
     
-    # Find the highest applicable trailing level
     applicable_level = None
     trail_to_ratio = None
     
@@ -314,161 +499,120 @@ def update_trailing_stop(position, current_price):
             break
     
     if applicable_level is None:
-        return position  # No trailing level reached yet
+        return position
     
-    # Calculate new stop price
     if side == 'long':
         new_stop = entry_price + (trail_to_ratio * initial_risk)
-        # Only move stop up, never down
         if new_stop > current_stop:
             position['stop'] = new_stop
             position['trailing_active'] = True
             position['trail_level'] = applicable_level
-            logger.debug(f"Long trailing stop updated: {current_stop:.5f} -> {new_stop:.5f} "
-                        f"(profit: {profit_ratio:.2f}R, trailing to: {trail_to_ratio:.1f}R)")
-    else:  # short
+    else:
         new_stop = entry_price - (trail_to_ratio * initial_risk)
-        # Only move stop down, never up
         if new_stop < current_stop:
             position['stop'] = new_stop
             position['trailing_active'] = True
             position['trail_level'] = applicable_level
-            logger.debug(f"Short trailing stop updated: {current_stop:.5f} -> {new_stop:.5f} "
-                        f"(profit: {profit_ratio:.2f}R, trailing to: {trail_to_ratio:.1f}R)")
     
     return position
 
-# ----------------------- DATA FETCHING -----------------------
+# --------------------------- DATA FETCHING ----------------------------
 
 def ensure_mt5_initialized():
     """Initialize MT5 connection"""
     if not MT5_AVAILABLE:
-        raise RuntimeError('MetaTrader5 package not available. Install with: pip install MetaTrader5')
+        raise RuntimeError('MetaTrader5 package not available')
     
     if not mt5.initialize():
         err = mt5.last_error()
         raise RuntimeError(f"MT5 initialization failed: {err}")
-    
-    logger.info("MT5 initialized successfully")
 
 def fetch_mt5_df(symbol, tf_const, utc_from, utc_to, min_bars_expected=1):
-    """Fetch data from MT5 with comprehensive error handling"""
+    """Fetch data from MT5"""
     ensure_mt5_initialized()
     
-    logger.info(f"Fetching {symbol} data from {utc_from} to {utc_to} (timeframe: {tf_const})")
-    
-    # Fetch data
     rates = mt5.copy_rates_range(symbol, tf_const, utc_from, utc_to)
     
     if rates is None or len(rates) < min_bars_expected:
-        # Get available symbols for debugging
-        all_symbols = mt5.symbols_get()
-        if all_symbols:
-            available_names = [s.name for s in all_symbols[:50]]
-            symbol_list = ', '.join(available_names)
-        else:
-            symbol_list = "No symbols available"
-        
-        raise RuntimeError(
-            f"Insufficient data for {symbol} (got {len(rates) if rates is not None else 0} bars, "
-            f"expected {min_bars_expected}). Check:\n"
-            f"1. Symbol spelling: '{symbol}'\n"
-            f"2. Market Watch subscription\n"
-            f"3. MT5 terminal login\n"
-            f"4. Date range validity\n"
-            f"Available symbols: {symbol_list}"
-        )
+        raise RuntimeError(f"Insufficient data for {symbol}")
     
-    # Create DataFrame
     df = pd.DataFrame(rates)
+    df['time'] = pd.to_datetime(df['time'], unit='s')
     
-    # Handle time column
-    if 'time' in df.columns:
-        df['time'] = pd.to_datetime(df['time'], unit='s')
-    else:
-        raise RuntimeError("No time column found in MT5 data")
-    
-    # Ensure tick_volume exists
     if 'tick_volume' not in df.columns:
-        if 'real_volume' in df.columns:
-            df['tick_volume'] = df['real_volume']
-        else:
-            df['tick_volume'] = 1
-            logger.warning("No volume data found, using unit volume")
+        df['tick_volume'] = 1
     
-    # Clean and validate data
     df = df.sort_values('time').reset_index(drop=True)
     df = df.dropna(subset=['open', 'high', 'low', 'close'])
     
-    logger.info(f"Successfully fetched {len(df)} bars for {symbol}")
     return df
 
-# --------------------------- BACKTEST ------------------------------
+# --------------------------- BACKTEST ----------------------------
+
+def calculate_max_drawdown(equity_curve):
+    """Calculate maximum drawdown"""
+    if len(equity_curve) == 0:
+        return 0
+    
+    peak = equity_curve.expanding().max()
+    drawdown = (equity_curve - peak) / peak * 100
+    return abs(drawdown.min())
 
 def backtest(symbol, start, end, timeframe):
-    """Enhanced bar-by-bar backtester"""
-    logger.info(f"Starting backtest: {symbol} from {start} to {end}")
+    """Enhanced backtest with ICT Fibonacci Strategy"""
+    logger.info(f"Starting ICT Fibonacci backtest: {symbol} from {start} to {end}")
     
-    # Validate inputs
     tf = MT5_TIMEFRAMES.get(timeframe)
     if tf is None:
         raise ValueError(f'Unsupported timeframe: {timeframe}')
     
-    # Parse dates
     utc_from = datetime.fromisoformat(start)
     utc_to = datetime.fromisoformat(end)
+    extended_from = utc_from - timedelta(days=90)
     
-    # Extend date range to ensure sufficient data for indicators
-    extended_from = utc_from - timedelta(days=60)
-    
-    # Fetch data for all timeframes
     try:
         df = fetch_mt5_df(symbol, tf, extended_from, utc_to, min_bars_expected=CONFIG['min_bars_required'])
         df_d1 = fetch_mt5_df(symbol, MT5_TIMEFRAMES['D1'], extended_from, utc_to, min_bars_expected=10)
         df_h4 = fetch_mt5_df(symbol, MT5_TIMEFRAMES['H4'], extended_from, utc_to, min_bars_expected=10)
+        df_h1 = fetch_mt5_df(symbol, MT5_TIMEFRAMES['H1'], extended_from, utc_to, min_bars_expected=10)
     except Exception as e:
         logger.error(f"Data fetch failed: {e}")
         raise
     
-    # Compute indicators
     df = compute_indicators(df)
     df_d1 = compute_indicators(df_d1)
     df_h4 = compute_indicators(df_h4)
+    df_h1 = compute_indicators(df_h1)
     
-    # Filter to actual backtest period
     df = df[df['time'] >= utc_from].reset_index(drop=True)
     
     if df.empty:
-        raise RuntimeError(f"No data available for backtest period {start} to {end}")
+        raise RuntimeError(f"No data available for backtest period")
     
-    # Initialize backtest variables
     balance = CONFIG['capital']
     trades = []
     open_positions = []
+    current_fib_setups = []
     
-    logger.info(f"Running backtest on {len(df)} bars...")
+    logger.info(f"Running ICT Fibonacci backtest on {len(df)} bars...")
     
-    # Main backtest loop
-    for idx, current in df.iterrows():
-        current_time = current['time']
+    for idx, current_bar in df.iterrows():
+        current_time = current_bar['time']
         
-        # Get trend data up to current time
         d1_slice = df_d1[df_d1['time'] <= current_time]
         h4_slice = df_h4[df_h4['time'] <= current_time]
+        h1_slice = df_h1[df_h1['time'] <= current_time]
         
-        if d1_slice.empty or h4_slice.empty:
+        if d1_slice.empty or h4_slice.empty or h1_slice.empty:
             continue
         
-        # Check existing positions for exits and trailing stops
-        for pos in open_positions[:]:  # Create copy for safe iteration
-            # Update trailing stop first
+        for pos in open_positions[:]:
             if CONFIG['trailing_stop']:
-                current_price = current['close']  # Use close price for trailing calculations
+                current_price = current_bar['close']
                 pos = update_trailing_stop(pos, current_price)
             
             if pos['side'] == 'long':
-                # Check stop loss (low <= stop)
-                if current['low'] <= pos['stop']:
+                if current_bar['low'] <= pos['stop']:
                     exit_price = pos['stop']
                     pl = (exit_price - pos['entry']) * pos['units']
                     balance += pl
@@ -483,13 +627,13 @@ def backtest(symbol, start, end, timeframe):
                         'exit': exit_price,
                         'pl': pl,
                         'exit_reason': exit_reason,
-                        'trail_level': pos.get('trail_level', None)
+                        'fib_level': pos.get('fib_level', 0),
+                        'setup_type': pos.get('setup_type', 'unknown')
                     })
                     open_positions.remove(pos)
                     continue
                 
-                # Check take profit (high >= tp)
-                if current['high'] >= pos['tp']:
+                if current_bar['high'] >= pos['tp']:
                     exit_price = pos['tp']
                     pl = (exit_price - pos['entry']) * pos['units']
                     balance += pl
@@ -501,14 +645,14 @@ def backtest(symbol, start, end, timeframe):
                         'exit': exit_price,
                         'pl': pl,
                         'exit_reason': 'take_profit',
-                        'trail_level': pos.get('trail_level', None)
+                        'fib_level': pos.get('fib_level', 0),
+                        'setup_type': pos.get('setup_type', 'unknown')
                     })
                     open_positions.remove(pos)
                     continue
             
-            else:  # short position
-                # Check stop loss (high >= stop)
-                if current['high'] >= pos['stop']:
+            elif pos['side'] == 'short':
+                if current_bar['high'] >= pos['stop']:
                     exit_price = pos['stop']
                     pl = (pos['entry'] - exit_price) * pos['units']
                     balance += pl
@@ -523,13 +667,13 @@ def backtest(symbol, start, end, timeframe):
                         'exit': exit_price,
                         'pl': pl,
                         'exit_reason': exit_reason,
-                        'trail_level': pos.get('trail_level', None)
+                        'fib_level': pos.get('fib_level', 0),
+                        'setup_type': pos.get('setup_type', 'unknown')
                     })
                     open_positions.remove(pos)
                     continue
                 
-                # Check take profit (low <= tp)
-                if current['low'] <= pos['tp']:
+                if current_bar['low'] <= pos['tp']:
                     exit_price = pos['tp']
                     pl = (pos['entry'] - exit_price) * pos['units']
                     balance += pl
@@ -541,75 +685,81 @@ def backtest(symbol, start, end, timeframe):
                         'exit': exit_price,
                         'pl': pl,
                         'exit_reason': 'take_profit',
-                        'trail_level': pos.get('trail_level', None)
+                        'fib_level': pos.get('fib_level', 0),
+                        'setup_type': pos.get('setup_type', 'unknown')
                     })
                     open_positions.remove(pos)
                     continue
         
-        # Check for new entries (only if we have room for more positions)
         if len(open_positions) >= CONFIG['max_concurrent_trades']:
             continue
         
-        # Get data slice for signal detection (need at least 2 bars)
-        bar_slice = df.iloc[:idx+1]
-        if len(bar_slice) < 2:
-            continue
-        
-        trend = determine_trend(d1_slice, h4_slice)
-        signal = entry_signal(bar_slice)
-        
-        if signal is None or (trend != signal and trend != 'neutral'):
-            continue
-        
-        # Calculate position parameters
-        entry_price = current['close']
-        
-        if signal == 'long':
-            stop_price = current['bb_lower']
-            opposite_band = current['bb_upper']
+        if idx % 5 == 0 or idx < 100:
+            fib_start = max(0, idx - CONFIG['fib_lookback'] * 2)
+            current_slice = df.iloc[fib_start:idx+1].copy()
             
-            if pd.isna(stop_price) or pd.isna(opposite_band) or stop_price >= entry_price:
-                continue
-            
-            risk_per_unit = entry_price - stop_price
-            tp_by_rr = entry_price + 3 * risk_per_unit
-            tp = min(tp_by_rr, opposite_band)
-            
-        else:  # short
-            stop_price = current['bb_upper']
-            opposite_band = current['bb_lower']
-            
-            if pd.isna(stop_price) or pd.isna(opposite_band) or stop_price <= entry_price:
-                continue
-            
-            risk_per_unit = stop_price - entry_price
-            tp_by_rr = entry_price - 3 * risk_per_unit
-            tp = max(tp_by_rr, opposite_band)
+            if len(current_slice) > CONFIG['fib_lookback']:
+                swing_points = identify_swing_points(current_slice, lookback=8)
+                fib_setups = find_fibonacci_setups(current_slice, swing_points)
+                current_fib_setups = fib_setups
+            else:
+                current_fib_setups = []
         
-        # Position sizing
-        risk_amount = (CONFIG['risk_pct'] / 100.0) * balance
-        if risk_per_unit <= 0:
-            continue
-        
-        units = risk_amount / risk_per_unit
-        
-        # Create position
-        position = {
-            'entry_time': current_time,
-            'side': signal,
-            'entry': entry_price,
-            'stop': stop_price,
-            'original_stop': stop_price,  # Keep track of original stop for trailing calculations
-            'tp': tp,
-            'units': units,
-            'trailing_active': False,
-            'trail_level': None
-        }
-        
-        open_positions.append(position)
-        logger.debug(f"Opened {signal} position at {entry_price}")
+        if current_fib_setups:
+            trend = determine_trend(d1_slice, h4_slice, h1_slice)
+            
+            fib_start_idx = max(0, idx - CONFIG['fib_lookback'] * 2)
+            
+            entry_signal = check_fibonacci_entry(current_fib_setups, df.iloc[fib_start_idx:idx+1], 
+                                               idx - fib_start_idx, trend)
+            
+            if entry_signal:
+                entry_price = entry_signal['entry_price']
+                signal_type = entry_signal['type']
+                fib_level = entry_signal['fib_level']
+                fib_price = entry_signal['fib_price']
+                setup_type = entry_signal['setup']['type']
+                
+                if signal_type == 'long':
+                    stop_price = fib_price - (CONFIG['fib_tolerance'] * 3)
+                    risk_per_unit = entry_price - stop_price
+                    
+                    if risk_per_unit <= 0:
+                        continue
+                    
+                    tp_distance = CONFIG['min_rr_ratio'] * risk_per_unit
+                    tp_price = entry_price + tp_distance
+                
+                else:
+                    stop_price = fib_price + (CONFIG['fib_tolerance'] * 3)
+                    risk_per_unit = stop_price - entry_price
+                    
+                    if risk_per_unit <= 0:
+                        continue
+                    
+                    tp_distance = CONFIG['min_rr_ratio'] * risk_per_unit
+                    tp_price = entry_price - tp_distance
+                
+                risk_amount = (CONFIG['risk_pct'] / 100.0) * balance
+                units = risk_amount / risk_per_unit
+                
+                position = {
+                    'entry_time': current_time,
+                    'side': signal_type,
+                    'entry': entry_price,
+                    'stop': stop_price,
+                    'original_stop': stop_price,
+                    'tp': tp_price,
+                    'units': units,
+                    'trailing_active': False,
+                    'trail_level': None,
+                    'fib_level': fib_level,
+                    'setup_type': setup_type
+                }
+                
+                open_positions.append(position)
+                logger.debug(f"Opened {signal_type} at {entry_price:.5f} Fib {fib_level}")
     
-    # Close any remaining open positions at final price
     final_price = df.iloc[-1]['close']
     final_time = df.iloc[-1]['time']
     
@@ -628,13 +778,12 @@ def backtest(symbol, start, end, timeframe):
             'exit': final_price,
             'pl': pl,
             'exit_reason': 'backtest_end',
-            'trail_level': pos.get('trail_level', None)
+            'fib_level': pos.get('fib_level', 0),
+            'setup_type': pos.get('setup_type', 'unknown')
         })
     
-    # Create results
     trades_df = pd.DataFrame(trades)
     
-    # Calculate performance metrics
     total_trades = len(trades_df)
     if total_trades > 0:
         wins = len(trades_df[trades_df['pl'] > 0])
@@ -648,15 +797,26 @@ def backtest(symbol, start, end, timeframe):
         profit_factor = abs(trades_df[trades_df['pl'] > 0]['pl'].sum() / 
                            trades_df[trades_df['pl'] <= 0]['pl'].sum()) if losses > 0 else float('inf')
         
-        trailing_stops = len(trades_df[trades_df['exit_reason'] == 'trailing_stop']) if total_trades > 0 else 0
-        take_profits = len(trades_df[trades_df['exit_reason'] == 'take_profit']) if total_trades > 0 else 0
-        stop_losses = len(trades_df[trades_df['exit_reason'] == 'stop_loss']) if total_trades > 0 else 0
+        fib_618_trades = len(trades_df[trades_df['fib_level'] == 0.618])
+        fib_705_trades = len(trades_df[trades_df['fib_level'] == 0.705])
+        fib_786_trades = len(trades_df[trades_df['fib_level'] == 0.786])
+        
+        trailing_stops = len(trades_df[trades_df['exit_reason'] == 'trailing_stop'])
+        take_profits = len(trades_df[trades_df['exit_reason'] == 'take_profit'])
+        stop_losses = len(trades_df[trades_df['exit_reason'] == 'stop_loss'])
         
         max_dd = calculate_max_drawdown(trades_df['pl'].cumsum() + CONFIG['capital'])
         
+        winning_trades = trades_df[trades_df['pl'] > 0]
+        if not winning_trades.empty and avg_loss != 0:
+            avg_rr = winning_trades['pl'].mean() / abs(avg_loss)
+        else:
+            avg_rr = 0
+        
     else:
         wins = losses = 0
-        win_rate = avg_win = avg_loss = profit_factor = total_profit = max_dd = 0
+        win_rate = avg_win = avg_loss = profit_factor = total_profit = max_dd = avg_rr = 0
+        fib_618_trades = fib_705_trades = fib_786_trades = 0
         trailing_stops = take_profits = stop_losses = 0
     
     summary = {
@@ -670,35 +830,33 @@ def backtest(symbol, start, end, timeframe):
         'avg_win': avg_win,
         'avg_loss': avg_loss,
         'profit_factor': profit_factor,
+        'avg_risk_reward': avg_rr,
         'max_drawdown': max_dd,
         'return_pct': (balance - CONFIG['capital']) / CONFIG['capital'] * 100,
+        'fib_618_trades': fib_618_trades,
+        'fib_705_trades': fib_705_trades,
+        'fib_786_trades': fib_786_trades,
         'trailing_stops': trailing_stops,
         'take_profits': take_profits,
         'stop_losses': stop_losses
     }
     
-    print('\n' + '='*50)
-    print('BACKTEST RESULTS')
-    print('='*50)
+    print('\n' + '='*60)
+    print('ICT FIBONACCI BACKTEST RESULTS')
+    print('='*60)
     for key, value in summary.items():
         if isinstance(value, float):
-            print(f'{key.replace("_", " ").title()}: {value:.2f}')
+            if 'pct' in key or 'rate' in key:
+                print(f'{key.replace("_", " ").title()}: {value:.2f}%')
+            else:
+                print(f'{key.replace("_", " ").title()}: {value:.2f}')
         else:
             print(f'{key.replace("_", " ").title()}: {value}')
-    print('='*50)
+    print('='*60)
     
     return trades_df, summary
 
-def calculate_max_drawdown(equity_curve):
-    """Calculate maximum drawdown from equity curve"""
-    if len(equity_curve) == 0:
-        return 0
-    
-    peak = equity_curve.expanding().max()
-    drawdown = (equity_curve - peak) / peak * 100
-    return abs(drawdown.min())
-
-# --------------------------- LIVE TRADING --------------------------
+# --------------------------- LIVE TRADING ----------------------------
 
 def connect_mt5(path=None):
     """Connect to MT5"""
@@ -715,14 +873,14 @@ def get_account_balance():
     """Get account balance"""
     info = mt5.account_info()
     if info is None:
-        raise RuntimeError('Could not get account info; ensure MT5 terminal is logged in')
+        raise RuntimeError('Could not get account info')
     return info.balance
 
 def get_symbol_info(symbol):
     """Get symbol information"""
     info = mt5.symbol_info(symbol)
     if info is None:
-        raise RuntimeError(f'Symbol {symbol} not available in Market Watch')
+        raise RuntimeError(f'Symbol {symbol} not available')
     return info
 
 def calc_volume(symbol, entry_price, stop_price, risk_amount):
@@ -737,11 +895,9 @@ def calc_volume(symbol, entry_price, stop_price, risk_amount):
     
     lots = risk_amount / (risk_in_price_units * contract_size)
     
-    # Round to broker step
     step = si.volume_step if si.volume_step else 0.01
     lots = math.floor(lots / step) * step
     
-    # Ensure minimum lot size
     min_lot = si.volume_min if si.volume_min else 0.01
     lots = max(lots, min_lot)
     
@@ -769,7 +925,7 @@ def place_market_order(symbol, side, volume, sl, tp):
         'tp': tp,
         'deviation': 20,
         'magic': 234000,
-        'comment': 'Python MT5 bot',
+        'comment': 'ICT Fibonacci Bot',
         'type_time': mt5.ORDER_TIME_GTC,
         'type_filling': mt5.ORDER_FILLING_FOK,
     }
@@ -777,129 +933,52 @@ def place_market_order(symbol, side, volume, sl, tp):
     result = mt5.order_send(request)
     return result
 
-def update_live_trailing_stop(position_ticket, symbol, new_sl):
-    """Update stop loss for live position via MT5"""
-    try:
-        # Get current position info
-        positions = mt5.positions_get(ticket=position_ticket)
-        if not positions:
-            logger.error(f"Position {position_ticket} not found")
-            return False
-        
-        position = positions[0]
-        
-        # Prepare modification request
-        request = {
-            'action': mt5.TRADE_ACTION_SLTP,
-            'symbol': symbol,
-            'position': position_ticket,
-            'sl': new_sl,
-            'tp': position.tp,  # Keep existing TP
-        }
-        
-        result = mt5.order_send(request)
-        
-        if result.retcode == mt5.TRADE_RETCODE_DONE:
-            logger.info(f"Trailing stop updated for position {position_ticket}: SL = {new_sl:.5f}")
-            return True
-        else:
-            logger.error(f"Failed to update trailing stop: {result.retcode} - {result.comment}")
-            return False
-            
-    except Exception as e:
-        logger.error(f"Error updating trailing stop: {e}")
-        return False
-
-def monitor_live_positions():
-    """Monitor and update trailing stops for live positions"""
-    if not CONFIG['trailing_stop']:
-        return
+class FibonacciTracker:
+    """Track Fibonacci setups in live trading"""
     
-    try:
-        positions = mt5.positions_get(symbol=CONFIG['symbol'])
-        if not positions:
+    def __init__(self):
+        self.fib_setups = []
+        self.last_analysis_time = None
+    
+    def update_fibonacci_setups(self, df):
+        """Update Fibonacci setups"""
+        if len(df) < CONFIG['fib_lookback'] * 2:
             return
         
-        for position in positions:
-            # Check if this is our bot's position (by magic number)
-            if position.magic != 234000:
-                continue
+        current_time = df.iloc[-1]['time']
+        if (self.last_analysis_time is None or 
+            (current_time - self.last_analysis_time).total_seconds() > 300):
             
-            symbol = position.symbol
-            ticket = position.ticket
-            entry_price = position.price_open
-            current_sl = position.sl
-            current_tp = position.tp
-            volume = position.volume
-            position_type = position.type
+            recent_df = df.tail(CONFIG['fib_lookback'] * 3).copy()
+            swing_points = identify_swing_points(recent_df, lookback=8)
+            new_fib_setups = find_fibonacci_setups(recent_df, swing_points)
             
-            # Get current price
-            tick = mt5.symbol_info_tick(symbol)
-            if not tick:
-                continue
-            
-            current_price = tick.bid if position_type == mt5.POSITION_TYPE_BUY else tick.ask
-            
-            # Calculate if we need to update trailing stop
-            is_long = position_type == mt5.POSITION_TYPE_BUY
-            
-            if is_long:
-                # For long positions, calculate profit from entry
-                profit_points = current_price - entry_price
-                original_risk = entry_price - current_sl  # Assuming current SL is original
-            else:
-                # For short positions
-                profit_points = entry_price - current_price
-                original_risk = current_sl - entry_price  # Assuming current SL is original
-            
-            if original_risk <= 0 or profit_points <= 0:
-                continue  # No profit yet or invalid setup
-            
-            # Calculate profit ratio
-            profit_ratio = profit_points / original_risk
-            
-            # Find applicable trailing level
-            new_sl = None
-            for level, trail_ratio in sorted(CONFIG['trailing_levels'].items(), reverse=True):
-                if profit_ratio >= level:
-                    if is_long:
-                        calculated_sl = entry_price + (trail_ratio * original_risk)
-                        # Only move SL up
-                        if calculated_sl > current_sl:
-                            new_sl = calculated_sl
-                    else:
-                        calculated_sl = entry_price - (trail_ratio * original_risk)
-                        # Only move SL down
-                        if calculated_sl < current_sl:
-                            new_sl = calculated_sl
-                    break
-            
-            # Update if needed
-            if new_sl is not None:
-                logger.info(f"Updating trailing stop for {symbol} position {ticket}: "
-                           f"{current_sl:.5f} -> {new_sl:.5f} (profit: {profit_ratio:.2f}R)")
-                update_live_trailing_stop(ticket, symbol, new_sl)
+            self.fib_setups = new_fib_setups
+            self.last_analysis_time = current_time
     
-    except Exception as e:
-        logger.error(f"Error monitoring positions: {e}")
+    def get_valid_setups(self):
+        """Get valid Fibonacci setups"""
+        return [setup for setup in self.fib_setups if setup['valid']]
+
+fib_tracker = FibonacciTracker()
 
 def live_run_once():
     """Execute one live trading cycle"""
-    # First, monitor existing positions for trailing stops
+    global fib_tracker
+    
     monitor_live_positions()
     
     symbol = CONFIG['symbol']
     
-    # Fetch current data
     bars_entry = mt5.copy_rates_from_pos(symbol, MT5_TIMEFRAMES[CONFIG['timeframe_entry']], 0, 500)
     bars_d1 = mt5.copy_rates_from_pos(symbol, MT5_TIMEFRAMES['D1'], 0, 500)
     bars_h4 = mt5.copy_rates_from_pos(symbol, MT5_TIMEFRAMES['H4'], 0, 500)
+    bars_h1 = mt5.copy_rates_from_pos(symbol, MT5_TIMEFRAMES['H1'], 0, 500)
     
-    if any(data is None for data in [bars_entry, bars_d1, bars_h4]):
+    if any(data is None for data in [bars_entry, bars_d1, bars_h4, bars_h1]):
         logger.error("Failed to fetch live data")
         return
     
-    # Create DataFrames
     df_entry = pd.DataFrame(bars_entry)
     df_entry['time'] = pd.to_datetime(df_entry['time'], unit='s')
     df_entry = compute_indicators(df_entry)
@@ -912,137 +991,201 @@ def live_run_once():
     df_h4['time'] = pd.to_datetime(df_h4['time'], unit='s')
     df_h4 = compute_indicators(df_h4)
     
-    # Analyze market
-    trend = determine_trend(df_d1, df_h4)
-    signal = entry_signal(df_entry)
+    df_h1 = pd.DataFrame(bars_h1)
+    df_h1['time'] = pd.to_datetime(df_h1['time'], unit='s')
+    df_h1 = compute_indicators(df_h1)
     
-    logger.info(f'Trend: {trend}, Signal: {signal}')
+    fib_tracker.update_fibonacci_setups(df_entry)
+    valid_setups = fib_tracker.get_valid_setups()
     
-    if signal is None:
-        logger.info('No entry signal detected')
+    trend = determine_trend(df_d1, df_h4, df_h1)
+    
+    logger.info(f'Trend: {trend}, Valid Fib Setups: {len(valid_setups)}')
+    
+    if not valid_setups:
+        logger.info('No valid Fibonacci setups')
         return
     
-    if trend != signal and trend != 'neutral':
-        logger.info('Signal opposite to trend; skipping entry')
+    entry_signal = check_fibonacci_entry(valid_setups, df_entry, len(df_entry) - 1, trend)
+    
+    if entry_signal is None:
+        logger.info('No Fibonacci entry signal')
         return
     
-    # Calculate trade parameters
-    last = df_entry.iloc[-1]
-    entry_price = last['close']
+    entry_price = entry_signal['entry_price']
+    signal_type = entry_signal['type']
+    fib_level = entry_signal['fib_level']
+    fib_price = entry_signal['fib_price']
     
-    if signal == 'long':
-        stop_price = last['bb_lower']
-        opposite_band = last['bb_upper']
+    if signal_type == 'long':
+        stop_price = fib_price - (CONFIG['fib_tolerance'] * 3)
         risk_per_unit = entry_price - stop_price
-        tp_by_rr = entry_price + 3 * risk_per_unit
-        tp = min(tp_by_rr, opposite_band)
+        tp_distance = CONFIG['min_rr_ratio'] * risk_per_unit
+        tp_price = entry_price + tp_distance
         side = 'buy'
     else:
-        stop_price = last['bb_upper']
-        opposite_band = last['bb_lower']
+        stop_price = fib_price + (CONFIG['fib_tolerance'] * 3)
         risk_per_unit = stop_price - entry_price
-        tp_by_rr = entry_price - 3 * risk_per_unit
-        tp = max(tp_by_rr, opposite_band)
+        tp_distance = CONFIG['min_rr_ratio'] * risk_per_unit
+        tp_price = entry_price - tp_distance
         side = 'sell'
     
-    # Position sizing
     balance = get_account_balance()
     risk_amount = (CONFIG['risk_pct'] / 100.0) * balance
-    volume = calc_volume(CONFIG['symbol'], entry_price, stop_price, risk_amount)
+    volume = calc_volume(symbol, entry_price, stop_price, risk_amount)
     
-    logger.info(f'Placing {side} order: volume={volume}, entry={entry_price:.5f}, sl={stop_price:.5f}, tp={tp:.5f}')
+    logger.info(f'Placing {side} order Fib {fib_level}')
+    logger.info(f'Vol: {volume}, Entry: {entry_price:.5f}, SL: {stop_price:.5f}, TP: {tp_price:.5f}')
     
-    # Place order
-    result = place_market_order(CONFIG['symbol'], side, volume, stop_price, tp)
+    result = place_market_order(symbol, side, volume, stop_price, tp_price)
     
     if result.retcode == mt5.TRADE_RETCODE_DONE:
-        logger.info(f'Order executed successfully: {result.order}')
+        logger.info(f'Trade executed: {result.order}')
     else:
-        logger.error(f'Order failed: {result.retcode} - {result.comment}')
+        logger.error(f'Order failed: {result.retcode}')
     
     return result
+
+def monitor_live_positions():
+    """Monitor and update trailing stops"""
+    if not CONFIG['trailing_stop']:
+        return
+    
+    try:
+        positions = mt5.positions_get(symbol=CONFIG['symbol'])
+        if not positions:
+            return
+        
+        for position in positions:
+            if position.magic != 234000:
+                continue
+            
+            symbol = position.symbol
+            ticket = position.ticket
+            entry_price = position.price_open
+            current_sl = position.sl
+            position_type = position.type
+            
+            tick = mt5.symbol_info_tick(symbol)
+            if not tick:
+                continue
+            
+            current_price = tick.bid if position_type == mt5.POSITION_TYPE_BUY else tick.ask
+            is_long = position_type == mt5.POSITION_TYPE_BUY
+            
+            if is_long:
+                profit_points = current_price - entry_price
+                original_risk = entry_price - current_sl
+            else:
+                profit_points = entry_price - current_price
+                original_risk = current_sl - entry_price
+            
+            if original_risk <= 0 or profit_points <= 0:
+                continue
+            
+            profit_ratio = profit_points / original_risk
+            
+            new_sl = None
+            for level, trail_ratio in sorted(CONFIG['trailing_levels'].items(), reverse=True):
+                if profit_ratio >= level:
+                    if is_long:
+                        calculated_sl = entry_price + (trail_ratio * original_risk)
+                        if calculated_sl > current_sl:
+                            new_sl = calculated_sl
+                    else:
+                        calculated_sl = entry_price - (trail_ratio * original_risk)
+                        if calculated_sl < current_sl:
+                            new_sl = calculated_sl
+                    break
+            
+            if new_sl is not None:
+                logger.info(f"Updating trailing stop: {current_sl:.5f} -> {new_sl:.5f}")
+                update_live_trailing_stop(ticket, symbol, new_sl)
+    
+    except Exception as e:
+        logger.error(f"Error monitoring positions: {e}")
+
+def update_live_trailing_stop(position_ticket, symbol, new_sl):
+    """Update stop loss for position"""
+    try:
+        positions = mt5.positions_get(ticket=position_ticket)
+        if not positions:
+            logger.error(f"Position {position_ticket} not found")
+            return False
+        
+        position = positions[0]
+        
+        request = {
+            'action': mt5.TRADE_ACTION_SLTP,
+            'symbol': symbol,
+            'position': position_ticket,
+            'sl': new_sl,
+            'tp': position.tp,
+        }
+        
+        result = mt5.order_send(request)
+        
+        if result.retcode == mt5.TRADE_RETCODE_DONE:
+            logger.info(f"Trailing stop updated: {position_ticket}")
+            return True
+        else:
+            logger.error(f"Failed to update: {result.retcode}")
+            return False
+            
+    except Exception as e:
+        logger.error(f"Error updating trailing stop: {e}")
+        return False
 
 # ----------------------------- MAIN -------------------------------
 
 def main():
-    """Main execution function"""
+    """Main function"""
     try:
-        # Validate configuration
         validate_config()
         
         if CONFIG['backtest']:
-            logger.info('Starting backtest mode...')
-            trades, summary = backtest(
+            if not MT5_AVAILABLE:
+                logger.error("Cannot run backtest without MT5")
+                return
+            
+            results, trades_df = backtest(
                 CONFIG['symbol'], 
                 CONFIG['start'], 
                 CONFIG['end'], 
                 CONFIG['timeframe_entry']
             )
             
-            # Display sample trades
-            if not trades.empty:
-                print(f'\nSample trades (first 10):')
-                print(trades.head(10).to_string(index=False))
-                
-                # Show trailing stop statistics if enabled
-                if CONFIG['trailing_stop']:
-                    trailing_count = len(trades[trades['exit_reason'] == 'trailing_stop'])
-                    print(f'\nTrailing Stop Performance:')
-                    print(f'Trades closed by trailing stop: {trailing_count}')
-                    if trailing_count > 0:
-                        trailing_trades = trades[trades['exit_reason'] == 'trailing_stop']
-                        avg_trailing_profit = trailing_trades['pl'].mean()
-                        print(f'Average trailing stop profit: {avg_trailing_profit:.2f}')
-                
-                # Save trades to CSV
-                filename = f"backtest_results_{CONFIG['symbol']}_{CONFIG['start']}_{CONFIG['end']}.csv"
-                trades.to_csv(filename, index=False)
-                logger.info(f'Trades saved to {filename}')
-        
         else:
-            logger.info('Starting live trading mode...')
+            if not MT5_AVAILABLE:
+                logger.error("Cannot run live trading without MT5")
+                return
+            
             connect_mt5()
+            logger.info("Starting live trading...")
+            logger.info("Press Ctrl+C to stop")
+            
             try:
-                # Run trading cycle
-                result = live_run_once()
-                
-                if result and result.retcode == mt5.TRADE_RETCODE_DONE:
-                    logger.info('Live trade executed successfully')
-                else:
-                    logger.info('No trades executed this cycle')
-                    
-            except Exception as e:
-                logger.error(f'Live trading error: {e}')
+                while True:
+                    live_run_once()
+                    time.sleep(60)
+            except KeyboardInterrupt:
+                logger.info("Stopping...")
             finally:
                 disconnect_mt5()
-    
+            
+    except RuntimeError as e:
+        logger.error(f"Critical error: {e}")
+    except ValueError as e:
+        logger.error(f"Config error: {e}")
     except Exception as e:
-        logger.error(f'Application error: {e}')
-        raise
-
-def run_live_bot(interval_seconds=60):
-    """Run live bot in continuous mode with trailing stop monitoring"""
-    logger.info(f'Starting continuous live trading (interval: {interval_seconds}s)...')
-    logger.info(f'Trailing stops enabled: {CONFIG["trailing_stop"]}')
-    if CONFIG['trailing_stop']:
-        logger.info(f'Trailing levels: {CONFIG["trailing_levels"]}')
-    
-    connect_mt5()
-    
-    try:
-        while True:
-            try:
-                live_run_once()  # This now includes position monitoring
-                logger.info(f'Sleeping for {interval_seconds} seconds...')
-                time.sleep(interval_seconds)
-            except KeyboardInterrupt:
-                logger.info('Bot stopped by user')
-                break
-            except Exception as e:
-                logger.error(f'Error in trading cycle: {e}')
-                time.sleep(interval_seconds)
-    finally:
-        disconnect_mt5()
+        logger.error(f"Unexpected error: {e}", exc_info=True)
 
 if __name__ == '__main__':
+    if MT5_AVAILABLE:
+        try:
+            if not mt5.initialize():
+                logger.error("Failed to initialize MT5")
+        except Exception as e:
+            logger.error(f"MT5 init error: {e}")
+    
     main()
