@@ -32,10 +32,10 @@ except ImportError:
 
 # ----------------------------- CONFIG -----------------------------
 CONFIG = {
-    'symbol': 'EURUSD.raw',
+    'symbol': 'USDCAD.raw',
     'backtest': True,
-    'start': '2024-06-22',
-    'end': '2024-12-31',
+    'start': '2024-06-25',
+    'end': '2025-06-30',
     'capital': 10000.0,
     'risk_pct': 0.5,
     'timeframe_entry': 'M15',
@@ -60,14 +60,14 @@ CONFIG = {
     'max_fib_age': 100,
     'fib_confirmation_bars': 2,
     
-    'max_concurrent_trades': 1,
+    'max_concurrent_trades': 10,
     'min_bars_required': 50,
     'trailing_stop': False,
     'trailing_levels': {
         1.0: 0.5,
         2.0: 1.0,
-        3.0: 1.5,
-        4.0: 2.0,
+        3.0: 2.0,
+        4.0: 3.0,
     },
     'min_rr_ratio': 1.5,
 }
