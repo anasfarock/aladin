@@ -48,9 +48,9 @@ CONFIG = {
     'ma_fast': 9,
     'ma_slow': 18,
     
-    'use_rsi_for_trend': False,
-    'use_vwap_for_trend': False,
-    'use_bollinger_for_trend': False,
+    'use_rsi_for_trend': True,
+    'use_vwap_for_trend': True,
+    'use_bollinger_for_trend': True,
     'use_ma_for_trend': True,
     
     'fib_lookback': 30,
@@ -62,7 +62,7 @@ CONFIG = {
     
     'max_concurrent_trades': 1,
     'min_bars_required': 50,
-    'trailing_stop': True,
+    'trailing_stop': False,
     'trailing_levels': {
         1.0: 0.5,
         2.0: 1.0,
