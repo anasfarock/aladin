@@ -33,10 +33,10 @@ except ImportError:
 # ----------------------------- CONFIG -----------------------------
 CONFIG = {
     'symbol': 'USDCAD.raw',
-    'backtest': True,
+    'backtest': False,
     'start': '2024-06-25',
     'end': '2025-06-30',
-    'capital': 10000.0,
+    'capital': 4950.0,
     'risk_pct': 0.5,
     'timeframe_entry': 'M15',
     'trend_timeframes': ['D1', 'H4', 'H1'],
