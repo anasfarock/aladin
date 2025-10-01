@@ -20,11 +20,11 @@ except ImportError:
 # ----------------------------- CONFIG -----------------------------
 CONFIG = {
     # Trading Parameters
-    'symbol': 'USDCAD',
+    'symbol': 'EURUSD',
     'backtest': False,
     'start': '2024-06-25',
     'end': '2025-06-30',
-    'capital': 4950.0,
+    'capital': 5000.0,
     'risk_pct': 0.5,
     
     # Timeframes

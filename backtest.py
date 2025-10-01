@@ -1,6 +1,6 @@
 """
-Backtesting Module
-Historical simulation with detailed performance metrics
+Backtesting Module - FIXED VERSION
+Historical simulation with corrected logic and detailed performance metrics
 """
 
 from datetime import datetime, timedelta
@@ -13,8 +13,6 @@ from trend_analysis import determine_trend
 from risk_management import update_trailing_stop
 from mt5_handler import fetch_mt5_df
 
-# --------------------------- BACKTEST ----------------------------
-
 def calculate_max_drawdown(equity_curve):
     """Calculate maximum drawdown from equity curve"""
     if len(equity_curve) == 0:
@@ -26,7 +24,13 @@ def calculate_max_drawdown(equity_curve):
 
 def backtest(symbol, start, end, timeframe):
     """
-    Run ICT Fibonacci backtest
+    Run ICT Fibonacci backtest with corrected logic
+    
+    FIXES:
+    - Proper index synchronization for Fibonacci setups
+    - Entry on next bar open (no lookahead bias)
+    - Consistent data slicing
+    - Better error handling
     
     Args:
         symbol: Trading symbol
@@ -39,7 +43,6 @@ def backtest(symbol, start, end, timeframe):
     """
     import os
     
-    # Create results directory if it doesn't exist
     os.makedirs('results', exist_ok=True)
     
     logger.info(f"Starting ICT Fibonacci backtest: {symbol} from {start} to {end}")
@@ -80,23 +83,93 @@ def backtest(symbol, start, end, timeframe):
     balance = CONFIG['capital']
     trades = []
     open_positions = []
-    current_fib_setups = []
+    pending_entry = None  # Store signal for next bar entry
     
     logger.info(f"Running backtest on {len(df)} bars...")
     
     # Main backtest loop
-    for idx, current_bar in df.iterrows():
+    for idx in range(len(df)):
+        current_bar = df.iloc[idx]
         current_time = current_bar['time']
         
         # Get timeframe slices up to current time
-        d1_slice = df_d1[df_d1['time'] <= current_time]
-        h4_slice = df_h4[df_h4['time'] <= current_time]
-        h1_slice = df_h1[df_h1['time'] <= current_time]
+        d1_slice = df_d1[df_d1['time'] <= current_time].copy()
+        h4_slice = df_h4[df_h4['time'] <= current_time].copy()
+        h1_slice = df_h1[df_h1['time'] <= current_time].copy()
         
         if d1_slice.empty or h4_slice.empty or h1_slice.empty:
             continue
         
-        # Check exits for open positions
+        # STEP 1: Execute pending entry from previous bar (avoid lookahead bias)
+        if pending_entry is not None:
+            entry_price = current_bar['open']  # Enter at open of current bar
+            signal_type = pending_entry['type']
+            fib_level = pending_entry['fib_level']
+            fib_price = pending_entry['fib_price']
+            setup_type = pending_entry['setup_type']
+            
+            # Calculate stops and targets
+            if signal_type == 'long':
+                stop_price = fib_price - (CONFIG['fib_tolerance'] * 3)
+                risk_per_unit = entry_price - stop_price
+                
+                if risk_per_unit > 0:
+                    tp_distance = CONFIG['min_rr_ratio'] * risk_per_unit
+                    tp_price = entry_price + tp_distance
+                    
+                    # Calculate position size
+                    risk_amount = (CONFIG['risk_pct'] / 100.0) * balance
+                    units = risk_amount / risk_per_unit
+                    
+                    # Create position
+                    position = {
+                        'entry_time': current_time,
+                        'side': 'long',
+                        'entry': entry_price,
+                        'stop': stop_price,
+                        'original_stop': stop_price,
+                        'tp': tp_price,
+                        'units': units,
+                        'trailing_active': False,
+                        'trail_level': None,
+                        'fib_level': fib_level,
+                        'setup_type': setup_type
+                    }
+                    
+                    open_positions.append(position)
+                    logger.debug(f"Entered LONG at {entry_price:.5f}, SL: {stop_price:.5f}, TP: {tp_price:.5f}, Fib: {fib_level}")
+            
+            else:  # short
+                stop_price = fib_price + (CONFIG['fib_tolerance'] * 3)
+                risk_per_unit = stop_price - entry_price
+                
+                if risk_per_unit > 0:
+                    tp_distance = CONFIG['min_rr_ratio'] * risk_per_unit
+                    tp_price = entry_price - tp_distance
+                    
+                    risk_amount = (CONFIG['risk_pct'] / 100.0) * balance
+                    units = risk_amount / risk_per_unit
+                    
+                    position = {
+                        'entry_time': current_time,
+                        'side': 'short',
+                        'entry': entry_price,
+                        'stop': stop_price,
+                        'original_stop': stop_price,
+                        'tp': tp_price,
+                        'units': units,
+                        'trailing_active': False,
+                        'trail_level': None,
+                        'fib_level': fib_level,
+                        'setup_type': setup_type
+                    }
+                    
+                    open_positions.append(position)
+                    logger.debug(f"Entered SHORT at {entry_price:.5f}, SL: {stop_price:.5f}, TP: {tp_price:.5f}, Fib: {fib_level}")
+            
+            pending_entry = None
+        
+        # STEP 2: Check exits for open positions
         for pos in open_positions[:]:
             # Update trailing stop
             if CONFIG['trailing_stop']:
@@ -185,107 +258,77 @@ def backtest(symbol, start, end, timeframe):
                     open_positions.remove(pos)
                     continue
         
-        # Check for new entries
+        # STEP 3: Check for new entry signals
         if len(open_positions) >= CONFIG['max_concurrent_trades']:
             continue
         
-        # Update Fibonacci setups periodically
-        if idx % 5 == 0 or idx < 100:
-            fib_start = max(0, idx - CONFIG['fib_lookback'] * 2)
-            current_slice = df.iloc[fib_start:idx+1].copy()
-            
-            if len(current_slice) > CONFIG['fib_lookback']:
-                swing_points = identify_swing_points(current_slice, lookback=8)
-                fib_setups = find_fibonacci_setups(current_slice, swing_points)
-                current_fib_setups = fib_setups
-            else:
-                current_fib_setups = []
+        if pending_entry is not None:
+            continue  # Already have a pending entry
         
-        # Check for entry signals
-        if current_fib_setups:
-            trend = determine_trend(d1_slice, h4_slice, h1_slice)
-            
-            fib_start_idx = max(0, idx - CONFIG['fib_lookback'] * 2)
-            
-            entry_signal = check_fibonacci_entry(
-                current_fib_setups, 
-                df.iloc[fib_start_idx:idx+1], 
-                idx - fib_start_idx, 
-                trend
-            )
-            
-            if entry_signal:
-                entry_price = entry_signal['entry_price']
-                signal_type = entry_signal['type']
-                fib_level = entry_signal['fib_level']
-                fib_price = entry_signal['fib_price']
-                setup_type = entry_signal['setup']['type']
-                
-                # Calculate stops and targets
-                if signal_type == 'long':
-                    stop_price = fib_price - (CONFIG['fib_tolerance'] * 3)
-                    risk_per_unit = entry_price - stop_price
-                    
-                    if risk_per_unit <= 0:
-                        continue
-                    
-                    tp_distance = CONFIG['min_rr_ratio'] * risk_per_unit
-                    tp_price = entry_price + tp_distance
-                
-                else:
-                    stop_price = fib_price + (CONFIG['fib_tolerance'] * 3)
-                    risk_per_unit = stop_price - entry_price
-                    
-                    if risk_per_unit <= 0:
-                        continue
-                    
-                    tp_distance = CONFIG['min_rr_ratio'] * risk_per_unit
-                    tp_price = entry_price - tp_distance
-                
-                # Calculate position size
-                risk_amount = (CONFIG['risk_pct'] / 100.0) * balance
-                units = risk_amount / risk_per_unit
-                
-                # Create position
-                position = {
-                    'entry_time': current_time,
-                    'side': signal_type,
-                    'entry': entry_price,
-                    'stop': stop_price,
-                    'original_stop': stop_price,
-                    'tp': tp_price,
-                    'units': units,
-                    'trailing_active': False,
-                    'trail_level': None,
-                    'fib_level': fib_level,
-                    'setup_type': setup_type
-                }
-                
-                open_positions.append(position)
-                logger.debug(f"Opened {signal_type} at {entry_price:.5f} Fib {fib_level}")
+        # Need enough historical data
+        if idx < CONFIG['fib_lookback']:
+            continue
+        
+        # Get data slice for Fibonacci analysis (up to PREVIOUS bar to avoid lookahead)
+        fib_start = max(0, idx - CONFIG['fib_lookback'] * 2)
+        hist_slice = df.iloc[fib_start:idx].copy()  # Up to but NOT including current bar
+        
+        if len(hist_slice) < CONFIG['fib_lookback']:
+            continue
+        
+        # Identify swing points and setups
+        swing_points = identify_swing_points(hist_slice, lookback=8)
+        if not swing_points:
+            continue
+        
+        fib_setups = find_fibonacci_setups(hist_slice, swing_points)
+        if not fib_setups:
+            continue
+        
+        # Determine trend
+        trend = determine_trend(d1_slice, h4_slice, h1_slice)
+        
+        # Check for entry signal (using last index of hist_slice)
+        entry_signal = check_fibonacci_entry(
+            fib_setups, 
+            hist_slice, 
+            len(hist_slice) - 1,  # Last bar of historical slice
+            trend
+        )
+        
+        if entry_signal:
+            # Store for entry on NEXT bar
+            pending_entry = {
+                'type': entry_signal['type'],
+                'fib_level': entry_signal['fib_level'],
+                'fib_price': entry_signal['fib_price'],
+                'setup_type': entry_signal['setup']['type']
+            }
+            logger.debug(f"Signal detected at bar {idx}, will enter on next bar")
     
     # Close any remaining positions at end
-    final_price = df.iloc[-1]['close']
-    final_time = df.iloc[-1]['time']
-    
-    for pos in open_positions:
-        if pos['side'] == 'long':
-            pl = (final_price - pos['entry']) * pos['units']
-        else:
-            pl = (pos['entry'] - final_price) * pos['units']
+    if len(df) > 0:
+        final_price = df.iloc[-1]['close']
+        final_time = df.iloc[-1]['time']
         
-        balance += pl
-        trades.append({
-            'entry_time': pos['entry_time'],
-            'exit_time': final_time,
-            'side': pos['side'],
-            'entry': pos['entry'],
-            'exit': final_price,
-            'pl': pl,
-            'exit_reason': 'backtest_end',
-            'fib_level': pos.get('fib_level', 0),
-            'setup_type': pos.get('setup_type', 'unknown')
-        })
+        for pos in open_positions:
+            if pos['side'] == 'long':
+                pl = (final_price - pos['entry']) * pos['units']
+            else:
+                pl = (pos['entry'] - final_price) * pos['units']
+            
+            balance += pl
+            trades.append({
+                'entry_time': pos['entry_time'],
+                'exit_time': final_time,
+                'side': pos['side'],
+                'entry': pos['entry'],
+                'exit': final_price,
+                'pl': pl,
+                'exit_reason': 'backtest_end',
+                'fib_level': pos.get('fib_level', 0),
+                'setup_type': pos.get('setup_type', 'unknown')
+            })
     
     # Generate statistics
     trades_df = pd.DataFrame(trades)
@@ -311,7 +354,10 @@ def backtest(symbol, start, end, timeframe):
         take_profits = len(trades_df[trades_df['exit_reason'] == 'take_profit'])
         stop_losses = len(trades_df[trades_df['exit_reason'] == 'stop_loss'])
         
-        max_dd = calculate_max_drawdown(trades_df['pl'].cumsum() + CONFIG['capital'])
+        # Calculate equity curve for drawdown
+        trades_df['cumulative_pl'] = trades_df['pl'].cumsum()
+        equity_curve = CONFIG['capital'] + trades_df['cumulative_pl']
+        max_dd = calculate_max_drawdown(equity_curve)
         
         winning_trades = trades_df[trades_df['pl'] > 0]
         if not winning_trades.empty and avg_loss != 0:
