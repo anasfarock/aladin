@@ -37,6 +37,11 @@ def backtest(symbol, start, end, timeframe):
     Returns:
         tuple: (trades_df, summary_dict)
     """
+    import os
+    
+    # Create results directory if it doesn't exist
+    os.makedirs('results', exist_ok=True)
+    
     logger.info(f"Starting ICT Fibonacci backtest: {symbol} from {start} to {end}")
     
     tf = MT5_TIMEFRAMES.get(timeframe)
