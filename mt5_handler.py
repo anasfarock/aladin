@@ -14,6 +14,28 @@ logger = logging.getLogger(__name__)
 
 # --------------------------- MT5 CONNECTION ----------------------------
 
+# Add this check to mt5_handler.py for better diagnostics
+def check_trading_permissions():
+    """Check if automated trading is allowed"""
+    terminal_info = mt5.terminal_info()
+    if terminal_info is None:
+        return False, "Cannot get terminal info"
+    
+    if not terminal_info.trade_allowed:
+        return False, "Trading not allowed in terminal"
+    
+    account_info = mt5.account_info()
+    if account_info is None:
+        return False, "Cannot get account info"
+    
+    if not account_info.trade_allowed:
+        return False, "Trading not allowed for this account"
+    
+    if not account_info.trade_expert:
+        return False, "Expert Advisor trading not allowed"
+    
+    return True, "All permissions OK"
+
 def ensure_mt5_initialized():
     """Initialize MT5 connection"""
     if not MT5_AVAILABLE:
