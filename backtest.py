@@ -1,6 +1,6 @@
 """
-Backtesting Module - FIXED VERSION
-Historical simulation with corrected logic and detailed performance metrics
+Backtesting Module - FIXED INDEX HANDLING
+Historical simulation with corrected dataframe slicing and index alignment
 """
 
 from datetime import datetime, timedelta
@@ -29,7 +29,7 @@ def backtest(symbol, start, end, timeframe):
     FIXES:
     - Proper index synchronization for Fibonacci setups
     - Entry on next bar open (no lookahead bias)
-    - Consistent data slicing
+    - Consistent data slicing with index reset
     - Better error handling
     
     Args:
@@ -276,12 +276,20 @@ def backtest(symbol, start, end, timeframe):
         if len(hist_slice) < CONFIG['fib_lookback']:
             continue
         
+        # CRITICAL FIX: Reset indices for clean calculation
+        hist_slice = hist_slice.reset_index(drop=True)
+        
         # Identify swing points and setups
         swing_points = identify_swing_points(hist_slice, lookback=8)
         if not swing_points:
             continue
         
-        fib_setups = find_fibonacci_setups(hist_slice, swing_points)
+        # FIXED: Pass current bar index explicitly (last bar of hist_slice)
+        fib_setups = find_fibonacci_setups(
+            hist_slice, 
+            swing_points,
+            current_bar_index=len(hist_slice) - 1
+        )
         if not fib_setups:
             continue
         

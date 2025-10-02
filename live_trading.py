@@ -1,6 +1,7 @@
 """
-Live Trading Engine - ENHANCED FIBONACCI DISPLAY
+Live Trading Engine - FIXED WITH ENHANCED FIBONACCI DISPLAY
 Shows complete Fibonacci swing range (0.0 and 1.0 levels) with entry level
+Fixed index handling for proper Fibonacci calculations
 """
 
 import time
@@ -33,6 +34,7 @@ def live_run_once(symbol):
     Execute one live trading cycle
     
     ENHANCED: Now displays complete Fibonacci swing information
+    FIXED: Proper index handling in Fibonacci calculations
     """
     # Monitor existing positions first
     monitor_live_positions(symbol)
@@ -56,7 +58,7 @@ def live_run_once(symbol):
         df_h4 = compute_indicators(df_h4)
         df_h1 = compute_indicators(df_h1)
         
-        # Update Fibonacci setups
+        # Update Fibonacci setups (tracker handles index reset internally)
         fib_tracker.update_fibonacci_setups(df_entry)
         valid_setups = fib_tracker.get_valid_setups()
         
@@ -69,11 +71,16 @@ def live_run_once(symbol):
             logger.info("No valid Fibonacci setups found")
             return None
         
+        # For entry checking, we need to use the dataframe with reset indices
+        # The FibonacciTracker already uses reset indices internally
+        # So we need to reset df_entry indices to match
+        df_entry_reset = df_entry.reset_index(drop=True)
+        
         # Check for entry signal
         entry_signal = check_fibonacci_entry(
             valid_setups, 
-            df_entry, 
-            len(df_entry) - 1, 
+            df_entry_reset,  # Use reset indices
+            len(df_entry_reset) - 1, 
             trend
         )
         
@@ -101,17 +108,21 @@ def live_run_once(symbol):
             fib_0_price = swing_high_price  # 0.0 = swing high (start of move)
             fib_1_price = swing_low_price  # 1.0 = swing low (end of move)
         
+        # Calculate swing size in pips (assuming 5-digit quotes)
+        swing_size_pips = abs(fib_1_price - fib_0_price) * 10000
+        
         # Display entry signal with complete Fibonacci information
         logger.info("="*70)
         logger.info(f"🎯 FIBONACCI ENTRY SIGNAL DETECTED")
         logger.info("="*70)
         logger.info(f"Signal Type: {signal_type.upper()}")
         logger.info(f"Setup: {fib_setup['type']}")
+        logger.info(f"Setup Age: {fib_setup['age']} bars")
         logger.info("")
         logger.info("📊 FIBONACCI SWING RANGE:")
         logger.info(f"  Fib 0.0 (100% Retracement): {fib_0_price:.5f}")
         logger.info(f"  Fib 1.0 (0% - Swing Point):  {fib_1_price:.5f}")
-        logger.info(f"  Swing Size: {abs(fib_1_price - fib_0_price):.5f} ({abs(fib_1_price - fib_0_price) * 10000:.1f} pips)")
+        logger.info(f"  Swing Size: {abs(fib_1_price - fib_0_price):.5f} ({swing_size_pips:.1f} pips)")
         logger.info("")
         logger.info(f"🎯 ENTRY LEVEL:")
         logger.info(f"  Fib {fib_level} Level: {fib_price:.5f}")
@@ -174,19 +185,26 @@ def live_run_once(symbol):
         balance = get_account_balance()
         volume, risk_amount = calculate_position_size(symbol, entry_approx, stop_price, balance)
         
+        # Calculate stop distance in pips
+        stop_distance_pips = abs(entry_approx - stop_price) * 10000
+        tp_distance_pips = abs(entry_approx - tp_price) * 10000
+        
         logger.info(f"\n💼 TRADE DETAILS:")
         logger.info(f"  Side: {side.upper()}")
         logger.info(f"  Volume: {volume} lots")
-        logger.info(f"  Stop Loss: {stop_price:.5f}")
-        logger.info(f"  Take Profit: {tp_price:.5f}")
-        logger.info(f"  Risk Amount: ${risk_amount:.2f}")
+        logger.info(f"  Entry (approx): {entry_approx:.5f}")
+        logger.info(f"  Stop Loss: {stop_price:.5f} ({stop_distance_pips:.1f} pips)")
+        logger.info(f"  Take Profit: {tp_price:.5f} ({tp_distance_pips:.1f} pips)")
+        logger.info(f"  Risk Amount: ${risk_amount:.2f} ({CONFIG['risk_pct']}% of balance)")
         logger.info(f"  Risk/Reward: 1:{CONFIG['min_rr_ratio']}")
+        logger.info(f"  Potential Profit: ${risk_amount * CONFIG['min_rr_ratio']:.2f}")
         
         # Place order - THIS NOW USES CURRENT MARKET PRICE
         logger.info("\n📤 Placing market order...")
         result = place_market_order(symbol, side, volume, stop_price, tp_price)
         
         if result and result.retcode == 10009:  # TRADE_RETCODE_DONE
+            actual_entry_pips = result.price * 10000
             logger.info("="*70)
             logger.info(f"✅ TRADE EXECUTED SUCCESSFULLY!")
             logger.info("="*70)
@@ -194,10 +212,14 @@ def live_run_once(symbol):
             logger.info(f"  Deal ID: {result.deal}")
             logger.info(f"  Actual Entry: {result.price:.5f}")
             logger.info(f"  Volume: {result.volume} lots")
+            logger.info(f"  Slippage: {abs(result.price - entry_approx) * 10000:.1f} pips")
             logger.info("="*70 + "\n")
             return result
         else:
             logger.error(f"❌ Trade execution failed")
+            if result:
+                logger.error(f"  Return code: {result.retcode}")
+                logger.error(f"  Comment: {result.comment}")
             return None
     
     except Exception as e:
@@ -227,6 +249,7 @@ def start_live_trading(symbol=None):
     logger.info(f"Risk per Trade: {CONFIG['risk_pct']}%")
     logger.info(f"Min R:R Ratio: {CONFIG['min_rr_ratio']}")
     logger.info(f"Trailing Stop: {'Enabled' if CONFIG['trailing_stop'] else 'Disabled'}")
+    logger.info(f"Max Concurrent Trades: {CONFIG['max_concurrent_trades']}")
     logger.info("="*60)
     
     try:
