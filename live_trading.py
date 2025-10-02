@@ -62,10 +62,32 @@ def live_run_once(symbol):
         fib_tracker.update_fibonacci_setups(df_entry)
         valid_setups = fib_tracker.get_valid_setups()
         
-        # Determine trend
-        trend = determine_trend(df_d1, df_h4, df_h1)
+        # Determine trend with details
+        from trend_analysis import get_trend_details, get_trend_confidence
         
-        logger.info(f"Trend: {trend}, Valid Fib Setups: {len(valid_setups)}")
+        trend = determine_trend(df_d1, df_h4, df_h1)
+        trend_details = get_trend_details(df_d1, df_h4, df_h1)
+        trend_confidence = get_trend_confidence(df_d1, df_h4, df_h1)
+        
+        # Display trend analysis
+        logger.info("="*70)
+        logger.info("📊 TREND ANALYSIS (Point-Based System)")
+        logger.info("="*70)
+        logger.info(f"Overall Trend: {trend.upper()}")
+        logger.info(f"Confidence: {trend_confidence:.1f}%")
+        logger.info(f"Total Points: {trend_details['total_points']:+.1f}")
+        logger.info("")
+        
+        for tf_name in ['D1', 'H4', 'H1']:
+            tf_data = trend_details['timeframes'][tf_name]
+            logger.info(f"{tf_name} (Weight: {tf_data['weight']}x):")
+            logger.info(f"  MA: {tf_data['ma_points']:+6.1f} | RSI: {tf_data['rsi_points']:+6.1f} | "
+                       f"VWAP: {tf_data['vwap_points']:+6.1f} | BB: {tf_data['bb_points']:+6.1f}")
+            logger.info(f"  Subtotal: {tf_data['total_points']:+6.1f}")
+        
+        logger.info("="*70)
+        logger.info(f"Valid Fib Setups: {len(valid_setups)}")
+        logger.info("="*70)
         
         if not valid_setups:
             logger.info("No valid Fibonacci setups found")

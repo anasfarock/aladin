@@ -85,6 +85,9 @@ def backtest(symbol, start, end, timeframe):
     open_positions = []
     pending_entry = None  # Store signal for next bar entry
     
+    # Trend tracking for statistics
+    trend_counts = {'bullish': 0, 'bearish': 0, 'neutral': 0}
+    
     logger.info(f"Running backtest on {len(df)} bars...")
     
     # Main backtest loop
@@ -295,6 +298,7 @@ def backtest(symbol, start, end, timeframe):
         
         # Determine trend
         trend = determine_trend(d1_slice, h4_slice, h1_slice)
+        trend_counts[trend] += 1
         
         # Check for entry signal (using last index of hist_slice)
         entry_signal = check_fibonacci_entry(
@@ -398,7 +402,10 @@ def backtest(symbol, start, end, timeframe):
         'fib_786_trades': fib_786_trades,
         'trailing_stops': trailing_stops,
         'take_profits': take_profits,
-        'stop_losses': stop_losses
+        'stop_losses': stop_losses,
+        'trend_bullish_bars': trend_counts['bullish'],
+        'trend_bearish_bars': trend_counts['bearish'],
+        'trend_neutral_bars': trend_counts['neutral']
     }
     
     # Print results
