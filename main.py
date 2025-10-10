@@ -10,6 +10,10 @@ Usage:
     
     # Run with custom symbol
     python main.py --live --symbol EURUSD
+    
+    # Run with manual trend (NEW)
+    python main.py --live --manual-trend bullish
+    python main.py --backtest --manual-trend bearish
 """
 
 import argparse
@@ -36,6 +40,11 @@ Examples:
   
   # Run backtest with custom dates
   python main.py --backtest --start 2024-01-01 --end 2024-12-31
+  
+  # Run with manual trend override (NEW)
+  python main.py --live --manual-trend bullish
+  python main.py --backtest --manual-trend bearish
+  python main.py --live --manual-trend neutral
         """
     )
     
@@ -93,6 +102,20 @@ Examples:
         help='Enable trailing stops'
     )
     
+    # Manual trend arguments (NEW)
+    parser.add_argument(
+        '--manual-trend',
+        type=str,
+        choices=['bullish', 'bearish', 'neutral'],
+        help='Manually set trend direction (overrides automatic analysis)'
+    )
+    
+    parser.add_argument(
+        '--auto-trend',
+        action='store_true',
+        help='Force automatic trend analysis (disables manual trend if set in config)'
+    )
+    
     return parser.parse_args()
 
 def update_config_from_args(args):
@@ -122,6 +145,20 @@ def update_config_from_args(args):
     
     if args.trailing:
         CONFIG['trailing_stop'] = True
+    
+    # Handle manual trend override (NEW)
+    if args.manual_trend:
+        CONFIG['use_manual_trend'] = True
+        CONFIG['manual_trend'] = args.manual_trend
+        logger.info(f"\n{'='*70}")
+        logger.info(f"Manual Trend Override Enabled via CLI")
+        logger.info(f"Trend Direction: {args.manual_trend.upper()}")
+        logger.info(f"{'='*70}\n")
+    
+    # Force automatic trend if requested
+    if args.auto_trend:
+        CONFIG['use_manual_trend'] = False
+        logger.info("\nAutomatic trend analysis enabled (manual trend disabled)")
 
 def main():
     """Main function"""
@@ -147,6 +184,13 @@ def main():
         logger.error("MetaTrader5 package not available!")
         logger.error("Install with: pip install MetaTrader5")
         sys.exit(1)
+    
+    # Display trend mode info
+    if CONFIG.get('use_manual_trend', False):
+        print(f"🎯 Trend Mode: MANUAL ({CONFIG['manual_trend'].upper()})")
+    else:
+        print(f"📊 Trend Mode: AUTOMATIC (Point-Based System)")
+    print("="*70 + "\n")
     
     try:
         if CONFIG['backtest']:

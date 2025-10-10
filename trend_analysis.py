@@ -1,5 +1,5 @@
 """
-Trend Analysis Module - POINT-BASED SYSTEM
+Trend Analysis Module - POINT-BASED SYSTEM with Manual Override
 Multi-timeframe trend determination using weighted point scoring
 More transparent, configurable, and reliable than voting system
 """
@@ -9,6 +9,25 @@ import logging
 from config import CONFIG
 
 logger = logging.getLogger(__name__)
+
+# --------------------------- MANUAL TREND OVERRIDE ----------------------------
+
+def get_manual_trend():
+    """
+    Return the manually configured trend
+    
+    Returns: 'bullish', 'bearish', or 'neutral'
+    """
+    trend = CONFIG.get('manual_trend', 'neutral').lower()
+    
+    logger.info(f"\n{'='*70}")
+    logger.info(f"MANUAL TREND MODE")
+    logger.info(f"{'='*70}")
+    logger.info(f"Trend Direction: {trend.upper()}")
+    logger.info(f"Note: Automatic trend analysis is BYPASSED")
+    logger.info(f"{'='*70}\n")
+    
+    return trend
 
 # --------------------------- POINT-BASED TREND ANALYSIS ----------------------------
 
@@ -157,7 +176,10 @@ def calculate_indicator_points(df, timeframe_weight):
 
 def determine_trend(df_d1, df_h4, df_h1):
     """
-    Determine overall trend using point-based scoring system
+    Determine overall trend using point-based scoring system or manual override
+    
+    If use_manual_trend is True, returns the manual_trend value from CONFIG
+    Otherwise uses automatic point-based system:
     
     Timeframe Weights:
     - D1: 3x (most important - overall trend)
@@ -174,6 +196,11 @@ def determine_trend(df_d1, df_h4, df_h1):
     
     Returns: 'bullish', 'bearish', or 'neutral'
     """
+    # Check if manual trend override is enabled
+    if CONFIG.get('use_manual_trend', False):
+        return get_manual_trend()
+    
+    # Automatic trend analysis
     timeframes = [
         ('D1', df_d1, 3),
         ('H4', df_h4, 2),
@@ -228,6 +255,18 @@ def get_trend_details(df_d1, df_h4, df_h1):
     
     Returns: dict with complete trend breakdown
     """
+    # Check if manual trend override is enabled
+    if CONFIG.get('use_manual_trend', False):
+        manual_trend = CONFIG.get('manual_trend', 'neutral').lower()
+        return {
+            'mode': 'manual',
+            'trend': manual_trend,
+            'trend_strength': 100.0,
+            'timeframes': {},
+            'total_points': 0
+        }
+    
+    # Automatic trend analysis
     timeframes = [
         ('D1', df_d1, 3),
         ('H4', df_h4, 2),
@@ -235,6 +274,7 @@ def get_trend_details(df_d1, df_h4, df_h1):
     ]
     
     details = {
+        'mode': 'automatic',
         'timeframes': {},
         'total_points': 0,
         'trend': 'neutral'
@@ -279,6 +319,10 @@ def get_trend_confidence(df_d1, df_h4, df_h1):
     
     Returns: float (0-100)
     """
+    # Manual trend always has 100% confidence
+    if CONFIG.get('use_manual_trend', False):
+        return 100.0
+    
     details = get_trend_details(df_d1, df_h4, df_h1)
     
     # Calculate max possible points with current config

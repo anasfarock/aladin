@@ -1,6 +1,6 @@
 """
 Configuration Module for MT5 ICT Fibonacci Trading Bot
-Updated with Point-Based Trend System
+Updated with Point-Based Trend System and Manual Trend Override
 """
 
 import logging
@@ -40,20 +40,24 @@ CONFIG = {
     'ma_fast': 9,
     'ma_slow': 18,
     
-    # Trend Analysis Toggles
+    # Manual Trend Override (NEW)
+    'use_manual_trend': False,  # Set to True to override automatic trend analysis
+    'manual_trend': 'bullish',  # Options: 'bullish', 'bearish', 'neutral'
+    
+    # Trend Analysis Toggles (Used only when use_manual_trend=False)
     'use_rsi_for_trend': True,
     'use_vwap_for_trend': True,
     'use_bollinger_for_trend': True,
     'use_ma_for_trend': True,
     
-    # Point-Based Trend System (NEW)
+    # Point-Based Trend System
     # Total max points: (3+3+2+2) * (3+2+1) = 60 points
     # Recommended thresholds:
     # - Conservative: ±12 points (strong trend required)
     # - Moderate: ±8 points (balanced)
     # - Aggressive: ±5 points (trade more setups)
-    'trend_bullish_threshold': 8,   # Points needed for bullish trend
-    'trend_bearish_threshold': -8,  # Points needed for bearish trend
+    'trend_bullish_threshold': 15,   # Points needed for bullish trend
+    'trend_bearish_threshold': -15,  # Points needed for bearish trend
     
     # Fibonacci Settings
     'fib_lookback': 30,
@@ -110,66 +114,80 @@ def validate_config():
         if tf not in MT5_TIMEFRAMES:
             raise ValueError(f"Unsupported trend timeframe: {tf}")
     
-    # Validate trend indicators
-    trend_indicators_enabled = [
-        CONFIG['use_ma_for_trend'],
-        CONFIG['use_rsi_for_trend'],
-        CONFIG['use_vwap_for_trend'],
-        CONFIG['use_bollinger_for_trend']
-    ]
-    
-    if not any(trend_indicators_enabled):
-        logger.warning("⚠️  No trend indicators enabled!")
-    
-    enabled_indicators = []
-    if CONFIG['use_ma_for_trend']:
-        enabled_indicators.append('Moving Averages')
-    if CONFIG['use_rsi_for_trend']:
-        enabled_indicators.append('RSI')
-    if CONFIG['use_vwap_for_trend']:
-        enabled_indicators.append('VWAP')
-    if CONFIG['use_bollinger_for_trend']:
-        enabled_indicators.append('Bollinger Bands')
-    
-    logger.info(f"Trend analysis using: {', '.join(enabled_indicators) if enabled_indicators else 'None'}")
-    
-    # Validate trend thresholds
-    if CONFIG['trend_bullish_threshold'] <= 0:
-        raise ValueError("Bullish threshold must be positive")
-    if CONFIG['trend_bearish_threshold'] >= 0:
-        raise ValueError("Bearish threshold must be negative")
-    
-    # Calculate max possible points
-    indicators_count = sum(trend_indicators_enabled)
-    max_points_per_indicator = {
-        'ma': 3,
-        'rsi': 3,
-        'vwap': 2,
-        'bb': 2
-    }
-    
-    active_indicators = []
-    if CONFIG['use_ma_for_trend']:
-        active_indicators.append('ma')
-    if CONFIG['use_rsi_for_trend']:
-        active_indicators.append('rsi')
-    if CONFIG['use_vwap_for_trend']:
-        active_indicators.append('vwap')
-    if CONFIG['use_bollinger_for_trend']:
-        active_indicators.append('bb')
-    
-    max_points_per_tf = sum(max_points_per_indicator[ind] for ind in active_indicators)
-    max_total_points = max_points_per_tf * 6  # (D1*3 + H4*2 + H1*1)
-    
-    logger.info(f"Point-Based Trend System:")
-    logger.info(f"  Max possible points: ±{max_total_points}")
-    logger.info(f"  Bullish threshold: {CONFIG['trend_bullish_threshold']} points")
-    logger.info(f"  Bearish threshold: {CONFIG['trend_bearish_threshold']} points")
-    
-    # Warn if thresholds are too high
-    if abs(CONFIG['trend_bullish_threshold']) > max_total_points * 0.7:
-        logger.warning(f"⚠️  Bullish threshold is high ({CONFIG['trend_bullish_threshold']}). "
-                      f"May result in fewer trades.")
-    if abs(CONFIG['trend_bearish_threshold']) > max_total_points * 0.7:
-        logger.warning(f"⚠️  Bearish threshold is high ({abs(CONFIG['trend_bearish_threshold'])}). "
-                      f"May result in fewer trades.")
+    # Validate manual trend settings
+    if CONFIG['use_manual_trend']:
+        valid_trends = ['bullish', 'bearish', 'neutral']
+        if CONFIG['manual_trend'].lower() not in valid_trends:
+            raise ValueError(f"Invalid manual_trend value: {CONFIG['manual_trend']}. "
+                           f"Must be one of: {', '.join(valid_trends)}")
+        
+        CONFIG['manual_trend'] = CONFIG['manual_trend'].lower()
+        logger.info("="*70)
+        logger.info("⚠️  MANUAL TREND MODE ENABLED")
+        logger.info(f"   Trend set to: {CONFIG['manual_trend'].upper()}")
+        logger.info("   Automatic trend analysis will be BYPASSED")
+        logger.info("="*70)
+    else:
+        # Validate trend indicators only if automatic trend is used
+        trend_indicators_enabled = [
+            CONFIG['use_ma_for_trend'],
+            CONFIG['use_rsi_for_trend'],
+            CONFIG['use_vwap_for_trend'],
+            CONFIG['use_bollinger_for_trend']
+        ]
+        
+        if not any(trend_indicators_enabled):
+            logger.warning("⚠️  No trend indicators enabled!")
+        
+        enabled_indicators = []
+        if CONFIG['use_ma_for_trend']:
+            enabled_indicators.append('Moving Averages')
+        if CONFIG['use_rsi_for_trend']:
+            enabled_indicators.append('RSI')
+        if CONFIG['use_vwap_for_trend']:
+            enabled_indicators.append('VWAP')
+        if CONFIG['use_bollinger_for_trend']:
+            enabled_indicators.append('Bollinger Bands')
+        
+        logger.info(f"Trend analysis using: {', '.join(enabled_indicators) if enabled_indicators else 'None'}")
+        
+        # Validate trend thresholds
+        if CONFIG['trend_bullish_threshold'] <= 0:
+            raise ValueError("Bullish threshold must be positive")
+        if CONFIG['trend_bearish_threshold'] >= 0:
+            raise ValueError("Bearish threshold must be negative")
+        
+        # Calculate max possible points
+        indicators_count = sum(trend_indicators_enabled)
+        max_points_per_indicator = {
+            'ma': 3,
+            'rsi': 3,
+            'vwap': 2,
+            'bb': 2
+        }
+        
+        active_indicators = []
+        if CONFIG['use_ma_for_trend']:
+            active_indicators.append('ma')
+        if CONFIG['use_rsi_for_trend']:
+            active_indicators.append('rsi')
+        if CONFIG['use_vwap_for_trend']:
+            active_indicators.append('vwap')
+        if CONFIG['use_bollinger_for_trend']:
+            active_indicators.append('bb')
+        
+        max_points_per_tf = sum(max_points_per_indicator[ind] for ind in active_indicators)
+        max_total_points = max_points_per_tf * 6  # (D1*3 + H4*2 + H1*1)
+        
+        logger.info(f"Point-Based Trend System:")
+        logger.info(f"  Max possible points: ±{max_total_points}")
+        logger.info(f"  Bullish threshold: {CONFIG['trend_bullish_threshold']} points")
+        logger.info(f"  Bearish threshold: {CONFIG['trend_bearish_threshold']} points")
+        
+        # Warn if thresholds are too high
+        if abs(CONFIG['trend_bullish_threshold']) > max_total_points * 0.7:
+            logger.warning(f"⚠️  Bullish threshold is high ({CONFIG['trend_bullish_threshold']}). "
+                          f"May result in fewer trades.")
+        if abs(CONFIG['trend_bearish_threshold']) > max_total_points * 0.7:
+            logger.warning(f"⚠️  Bearish threshold is high ({abs(CONFIG['trend_bearish_threshold'])}). "
+                          f"May result in fewer trades.")
