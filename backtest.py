@@ -1,6 +1,7 @@
 """
 Backtesting Module - FIXED INDEX HANDLING
 Historical simulation with corrected dataframe slicing and index alignment
+Updated to support Manual Trend Override
 """
 
 from datetime import datetime, timedelta
@@ -32,6 +33,10 @@ def backtest(symbol, start, end, timeframe):
     - Consistent data slicing with index reset
     - Better error handling
     
+    UPDATED:
+    - Support for manual trend override
+    - Enhanced trend mode display
+    
     Args:
         symbol: Trading symbol
         start: Start date (YYYY-MM-DD)
@@ -46,6 +51,13 @@ def backtest(symbol, start, end, timeframe):
     os.makedirs('results', exist_ok=True)
     
     logger.info(f"Starting ICT Fibonacci backtest: {symbol} from {start} to {end}")
+    
+    # Display trend mode
+    if CONFIG.get('use_manual_trend', False):
+        logger.info(f"Trend Mode: MANUAL ({CONFIG['manual_trend'].upper()})")
+        logger.info("Note: Automatic trend analysis will be BYPASSED")
+    else:
+        logger.info("Trend Mode: AUTOMATIC (Point-Based System)")
     
     tf = MT5_TIMEFRAMES.get(timeframe)
     if tf is None:
@@ -90,6 +102,9 @@ def backtest(symbol, start, end, timeframe):
     
     logger.info(f"Running backtest on {len(df)} bars...")
     
+    # Track trend changes for logging (only in automatic mode)
+    last_logged_trend = None
+    
     # Main backtest loop
     for idx in range(len(df)):
         current_bar = df.iloc[idx]
@@ -110,6 +125,7 @@ def backtest(symbol, start, end, timeframe):
             fib_level = pending_entry['fib_level']
             fib_price = pending_entry['fib_price']
             setup_type = pending_entry['setup_type']
+            trend_mode = 'manual' if CONFIG.get('use_manual_trend', False) else 'auto'
             
             # Calculate stops and targets
             if signal_type == 'long':
@@ -136,11 +152,13 @@ def backtest(symbol, start, end, timeframe):
                         'trailing_active': False,
                         'trail_level': None,
                         'fib_level': fib_level,
-                        'setup_type': setup_type
+                        'setup_type': setup_type,
+                        'trend_mode': trend_mode
                     }
                     
                     open_positions.append(position)
-                    logger.debug(f"Entered LONG at {entry_price:.5f}, SL: {stop_price:.5f}, TP: {tp_price:.5f}, Fib: {fib_level}")
+                    logger.debug(f"Entered LONG at {entry_price:.5f}, SL: {stop_price:.5f}, TP: {tp_price:.5f}, "
+                               f"Fib: {fib_level}, Trend: {trend_mode}")
             
             else:  # short
                 stop_price = fib_price + (CONFIG['fib_tolerance'] * 3)
@@ -164,11 +182,13 @@ def backtest(symbol, start, end, timeframe):
                         'trailing_active': False,
                         'trail_level': None,
                         'fib_level': fib_level,
-                        'setup_type': setup_type
+                        'setup_type': setup_type,
+                        'trend_mode': trend_mode
                     }
                     
                     open_positions.append(position)
-                    logger.debug(f"Entered SHORT at {entry_price:.5f}, SL: {stop_price:.5f}, TP: {tp_price:.5f}, Fib: {fib_level}")
+                    logger.debug(f"Entered SHORT at {entry_price:.5f}, SL: {stop_price:.5f}, TP: {tp_price:.5f}, "
+                               f"Fib: {fib_level}, Trend: {trend_mode}")
             
             pending_entry = None
         
@@ -197,7 +217,8 @@ def backtest(symbol, start, end, timeframe):
                         'pl': pl,
                         'exit_reason': exit_reason,
                         'fib_level': pos.get('fib_level', 0),
-                        'setup_type': pos.get('setup_type', 'unknown')
+                        'setup_type': pos.get('setup_type', 'unknown'),
+                        'trend_mode': pos.get('trend_mode', 'auto')
                     })
                     open_positions.remove(pos)
                     continue
@@ -216,7 +237,8 @@ def backtest(symbol, start, end, timeframe):
                         'pl': pl,
                         'exit_reason': 'take_profit',
                         'fib_level': pos.get('fib_level', 0),
-                        'setup_type': pos.get('setup_type', 'unknown')
+                        'setup_type': pos.get('setup_type', 'unknown'),
+                        'trend_mode': pos.get('trend_mode', 'auto')
                     })
                     open_positions.remove(pos)
                     continue
@@ -238,7 +260,8 @@ def backtest(symbol, start, end, timeframe):
                         'pl': pl,
                         'exit_reason': exit_reason,
                         'fib_level': pos.get('fib_level', 0),
-                        'setup_type': pos.get('setup_type', 'unknown')
+                        'setup_type': pos.get('setup_type', 'unknown'),
+                        'trend_mode': pos.get('trend_mode', 'auto')
                     })
                     open_positions.remove(pos)
                     continue
@@ -256,7 +279,8 @@ def backtest(symbol, start, end, timeframe):
                         'pl': pl,
                         'exit_reason': 'take_profit',
                         'fib_level': pos.get('fib_level', 0),
-                        'setup_type': pos.get('setup_type', 'unknown')
+                        'setup_type': pos.get('setup_type', 'unknown'),
+                        'trend_mode': pos.get('trend_mode', 'auto')
                     })
                     open_positions.remove(pos)
                     continue
@@ -300,6 +324,11 @@ def backtest(symbol, start, end, timeframe):
         trend = determine_trend(d1_slice, h4_slice, h1_slice)
         trend_counts[trend] += 1
         
+        # Log trend changes (only in automatic mode and when trend changes)
+        if not CONFIG.get('use_manual_trend', False) and trend != last_logged_trend:
+            logger.debug(f"Bar {idx}: Trend changed to {trend.upper()}")
+            last_logged_trend = trend
+        
         # Check for entry signal (using last index of hist_slice)
         entry_signal = check_fibonacci_entry(
             fib_setups, 
@@ -339,7 +368,8 @@ def backtest(symbol, start, end, timeframe):
                 'pl': pl,
                 'exit_reason': 'backtest_end',
                 'fib_level': pos.get('fib_level', 0),
-                'setup_type': pos.get('setup_type', 'unknown')
+                'setup_type': pos.get('setup_type', 'unknown'),
+                'trend_mode': pos.get('trend_mode', 'auto')
             })
     
     # Generate statistics
@@ -377,11 +407,16 @@ def backtest(symbol, start, end, timeframe):
         else:
             avg_rr = 0
         
+        # Count manual vs auto trades
+        manual_trades = len(trades_df[trades_df.get('trend_mode', 'auto') == 'manual'])
+        auto_trades = len(trades_df[trades_df.get('trend_mode', 'auto') == 'auto'])
+        
     else:
         wins = losses = 0
         win_rate = avg_win = avg_loss = profit_factor = total_profit = max_dd = avg_rr = 0
         fib_618_trades = fib_705_trades = fib_786_trades = 0
         trailing_stops = take_profits = stop_losses = 0
+        manual_trades = auto_trades = 0
     
     summary = {
         'starting_balance': CONFIG['capital'],
@@ -405,14 +440,27 @@ def backtest(symbol, start, end, timeframe):
         'stop_losses': stop_losses,
         'trend_bullish_bars': trend_counts['bullish'],
         'trend_bearish_bars': trend_counts['bearish'],
-        'trend_neutral_bars': trend_counts['neutral']
+        'trend_neutral_bars': trend_counts['neutral'],
+        'trend_mode': 'manual' if CONFIG.get('use_manual_trend', False) else 'automatic',
+        'manual_trend_trades': manual_trades,
+        'auto_trend_trades': auto_trades
     }
     
     # Print results
     print('\n' + '='*60)
     print('ICT FIBONACCI BACKTEST RESULTS')
     print('='*60)
+    
+    # Print trend mode info first
+    if CONFIG.get('use_manual_trend', False):
+        print(f'Trend Mode: MANUAL ({CONFIG["manual_trend"].upper()})')
+    else:
+        print(f'Trend Mode: AUTOMATIC (Point-Based System)')
+    print('='*60)
+    
     for key, value in summary.items():
+        if key in ['trend_mode', 'manual_trend_trades', 'auto_trend_trades']:
+            continue  # Skip these, already displayed
         if isinstance(value, float):
             if 'pct' in key or 'rate' in key:
                 print(f'{key.replace("_", " ").title()}: {value:.2f}%')

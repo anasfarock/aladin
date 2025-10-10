@@ -21,7 +21,7 @@ except ImportError:
 # ----------------------------- CONFIG -----------------------------
 CONFIG = {
     # Trading Parameters
-    'symbol': 'USDCAD',
+    'symbol': 'USDCAD.raw',
     'backtest': False,
     'start': '2024-06-25',
     'end': '2025-06-30',
@@ -41,7 +41,7 @@ CONFIG = {
     'ma_slow': 18,
     
     # Manual Trend Override (NEW)
-    'use_manual_trend': False,  # Set to True to override automatic trend analysis
+    'use_manual_trend': True,  # Set to True to override automatic trend analysis
     'manual_trend': 'bullish',  # Options: 'bullish', 'bearish', 'neutral'
     
     # Trend Analysis Toggles (Used only when use_manual_trend=False)

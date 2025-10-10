@@ -2,6 +2,7 @@
 Live Trading Engine - FIXED WITH ENHANCED FIBONACCI DISPLAY
 Shows complete Fibonacci swing range (0.0 and 1.0 levels) with entry level
 Fixed index handling for proper Fibonacci calculations
+Updated to support Manual Trend Override
 """
 
 import time
@@ -35,6 +36,7 @@ def live_run_once(symbol):
     
     ENHANCED: Now displays complete Fibonacci swing information
     FIXED: Proper index handling in Fibonacci calculations
+    UPDATED: Support for manual trend override
     """
     # Monitor existing positions first
     monitor_live_positions(symbol)
@@ -69,21 +71,31 @@ def live_run_once(symbol):
         trend_details = get_trend_details(df_d1, df_h4, df_h1)
         trend_confidence = get_trend_confidence(df_d1, df_h4, df_h1)
         
-        # Display trend analysis
+        # Display trend analysis (updated for manual mode)
         logger.info("="*70)
-        logger.info("📊 TREND ANALYSIS (Point-Based System)")
-        logger.info("="*70)
-        logger.info(f"Overall Trend: {trend.upper()}")
-        logger.info(f"Confidence: {trend_confidence:.1f}%")
-        logger.info(f"Total Points: {trend_details['total_points']:+.1f}")
-        logger.info("")
         
-        for tf_name in ['D1', 'H4', 'H1']:
-            tf_data = trend_details['timeframes'][tf_name]
-            logger.info(f"{tf_name} (Weight: {tf_data['weight']}x):")
-            logger.info(f"  MA: {tf_data['ma_points']:+6.1f} | RSI: {tf_data['rsi_points']:+6.1f} | "
-                       f"VWAP: {tf_data['vwap_points']:+6.1f} | BB: {tf_data['bb_points']:+6.1f}")
-            logger.info(f"  Subtotal: {tf_data['total_points']:+6.1f}")
+        if CONFIG.get('use_manual_trend', False):
+            logger.info("📊 TREND ANALYSIS (Manual Override Mode)")
+            logger.info("="*70)
+            logger.info(f"Trend Mode: MANUAL")
+            logger.info(f"Overall Trend: {trend.upper()}")
+            logger.info(f"Confidence: 100.0% (Manual Override)")
+            logger.info(f"Note: Automatic trend analysis is BYPASSED")
+        else:
+            logger.info("📊 TREND ANALYSIS (Point-Based System)")
+            logger.info("="*70)
+            logger.info(f"Trend Mode: AUTOMATIC")
+            logger.info(f"Overall Trend: {trend.upper()}")
+            logger.info(f"Confidence: {trend_confidence:.1f}%")
+            logger.info(f"Total Points: {trend_details['total_points']:+.1f}")
+            logger.info("")
+            
+            for tf_name in ['D1', 'H4', 'H1']:
+                tf_data = trend_details['timeframes'][tf_name]
+                logger.info(f"{tf_name} (Weight: {tf_data['weight']}x):")
+                logger.info(f"  MA: {tf_data['ma_points']:+6.1f} | RSI: {tf_data['rsi_points']:+6.1f} | "
+                           f"VWAP: {tf_data['vwap_points']:+6.1f} | BB: {tf_data['bb_points']:+6.1f}")
+                logger.info(f"  Subtotal: {tf_data['total_points']:+6.1f}")
         
         logger.info("="*70)
         logger.info(f"Valid Fib Setups: {len(valid_setups)}")
@@ -140,6 +152,7 @@ def live_run_once(symbol):
         logger.info(f"Signal Type: {signal_type.upper()}")
         logger.info(f"Setup: {fib_setup['type']}")
         logger.info(f"Setup Age: {fib_setup['age']} bars")
+        logger.info(f"Trend Alignment: {trend.upper()} ({'Manual' if CONFIG.get('use_manual_trend', False) else 'Auto'})")
         logger.info("")
         logger.info("📊 FIBONACCI SWING RANGE:")
         logger.info(f"  Fib 0.0 (100% Retracement): {fib_0_price:.5f}")
@@ -268,6 +281,13 @@ def start_live_trading(symbol=None):
     logger.info(f"Symbol: {symbol}")
     logger.info(f"Entry Timeframe: {CONFIG['timeframe_entry']}")
     logger.info(f"Trend Timeframes: {', '.join(CONFIG['trend_timeframes'])}")
+    
+    # Display trend mode
+    if CONFIG.get('use_manual_trend', False):
+        logger.info(f"Trend Mode: MANUAL ({CONFIG['manual_trend'].upper()})")
+    else:
+        logger.info(f"Trend Mode: AUTOMATIC (Point-Based)")
+    
     logger.info(f"Risk per Trade: {CONFIG['risk_pct']}%")
     logger.info(f"Min R:R Ratio: {CONFIG['min_rr_ratio']}")
     logger.info(f"Trailing Stop: {'Enabled' if CONFIG['trailing_stop'] else 'Disabled'}")
