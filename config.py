@@ -21,7 +21,7 @@ except ImportError:
 # ----------------------------- CONFIG -----------------------------
 CONFIG = {
     # Trading Parameters
-    'symbol': 'USDCAD.raw',
+    'symbol': 'USDCAD',
     'backtest': False,
     'start': '2024-06-25',
     'end': '2025-06-30',
