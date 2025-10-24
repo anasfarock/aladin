@@ -41,7 +41,7 @@ CONFIG = {
     'ma_slow': 18,
     
     # Manual Trend Override (NEW)
-    'use_manual_trend': True,  # Set to True to override automatic trend analysis
+    'use_manual_trend': False,  # Set to True to override automatic trend analysis
     'manual_trend': 'bullish',  # Options: 'bullish', 'bearish', 'neutral'
     
     # Trend Analysis Toggles (Used only when use_manual_trend=False)
@@ -56,8 +56,8 @@ CONFIG = {
     # - Conservative: ±12 points (strong trend required)
     # - Moderate: ±8 points (balanced)
     # - Aggressive: ±5 points (trade more setups)
-    'trend_bullish_threshold': 15,   # Points needed for bullish trend
-    'trend_bearish_threshold': -15,  # Points needed for bearish trend
+    'trend_bullish_threshold': 10,   # Points needed for bullish trend
+    'trend_bearish_threshold': -10,  # Points needed for bearish trend
     
     # Fibonacci Settings
     'fib_lookback': 30,
