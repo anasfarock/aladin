@@ -75,6 +75,8 @@ def live_run_once(symbol):
         logger.info("="*70)
         
         if CONFIG.get('use_manual_trend', False):
+            logger.info(f"Symbol: {symbol}")
+            logger.info("="*70)
             logger.info("📊 TREND ANALYSIS (Manual Override Mode)")
             logger.info("="*70)
             logger.info(f"Trend Mode: MANUAL")
@@ -82,6 +84,8 @@ def live_run_once(symbol):
             logger.info(f"Confidence: 100.0% (Manual Override)")
             logger.info(f"Note: Automatic trend analysis is BYPASSED")
         else:
+            logger.info(f"Symbol: {symbol}")
+            logger.info("="*70)
             logger.info("📊 TREND ANALYSIS (Point-Based System)")
             logger.info("="*70)
             logger.info(f"Trend Mode: AUTOMATIC")
