@@ -232,6 +232,8 @@ def live_run_once(symbol):
         logger.info(f"  Side: {side.upper()}")
         logger.info(f"  Volume: {volume} lots")
         logger.info(f"  Entry (approx): {entry_approx:.5f}")
+        logger.info(f"  Fib 0.0 (100% Retracement): {fib_0_price:.5f}")
+        logger.info(f"  Fib 1.0 (0% - Swing Point):  {fib_1_price:.5f}")
         logger.info(f"  Stop Loss: {stop_price:.5f} ({stop_distance_pips:.1f} pips)")
         logger.info(f"  Take Profit: {tp_price:.5f} ({tp_distance_pips:.1f} pips)")
         logger.info(f"  Risk Amount: ${risk_amount:.2f} ({CONFIG['risk_pct']}% of balance)")
