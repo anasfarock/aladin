@@ -1,7 +1,7 @@
 """
-ICT Fibonacci Strategy Module - FIXED VERSION
+ICT Fibonacci Strategy Module - UPDATED WITH MIN_FIB_CANDLES
 Handles swing point identification, Fibonacci calculations, and setup detection
-with proper index handling for sliced dataframes
+with proper index handling and minimum candle distance validation
 """
 
 import logging
@@ -13,19 +13,23 @@ logger = logging.getLogger(__name__)
 
 def identify_swing_points(df, lookback=10):
     """
-    Identify swing highs and lows
+    Identify swing highs and lows with minimum candle distance validation
     
-    Returns swing points with indices RELATIVE to the input dataframe
+    Returns swing points with indices RELATIVE to the input dataframe.
+    Only returns swing points that have at least min_fib_candles distance
+    from adjacent swing points.
     """
     if len(df) < lookback * 2 + 1:
         return []
     
     swing_points = []
+    min_distance = CONFIG['min_fib_candles']
     
     for i in range(lookback, len(df) - lookback):
         current_high = df.iloc[i]['high']
         current_low = df.iloc[i]['low']
         
+        # Check for swing high
         is_swing_high = True
         for j in range(i - lookback, i + lookback + 1):
             if j != i and df.iloc[j]['high'] > current_high:
@@ -33,13 +37,25 @@ def identify_swing_points(df, lookback=10):
                 break
         
         if is_swing_high:
-            swing_points.append({
-                'index': i,  # Index relative to input df
-                'time': df.iloc[i]['time'],
-                'price': current_high,
-                'type': 'high'
-            })
+            # Validate minimum distance from previous swing point
+            if swing_points:
+                bars_since_last = i - swing_points[-1]['index']
+                if bars_since_last >= min_distance:
+                    swing_points.append({
+                        'index': i,  # Index relative to input df
+                        'time': df.iloc[i]['time'],
+                        'price': current_high,
+                        'type': 'high'
+                    })
+            else:
+                swing_points.append({
+                    'index': i,
+                    'time': df.iloc[i]['time'],
+                    'price': current_high,
+                    'type': 'high'
+                })
         
+        # Check for swing low
         is_swing_low = True
         for j in range(i - lookback, i + lookback + 1):
             if j != i and df.iloc[j]['low'] < current_low:
@@ -47,12 +63,26 @@ def identify_swing_points(df, lookback=10):
                 break
         
         if is_swing_low:
-            swing_points.append({
-                'index': i,  # Index relative to input df
-                'time': df.iloc[i]['time'],
-                'price': current_low,
-                'type': 'low'
-            })
+            # Validate minimum distance from previous swing point
+            if swing_points:
+                bars_since_last = i - swing_points[-1]['index']
+                if bars_since_last >= min_distance:
+                    swing_points.append({
+                        'index': i,
+                        'time': df.iloc[i]['time'],
+                        'price': current_low,
+                        'type': 'low'
+                    })
+            else:
+                swing_points.append({
+                    'index': i,
+                    'time': df.iloc[i]['time'],
+                    'price': current_low,
+                    'type': 'low'
+                })
+    
+    logger.debug(f"Identified {len(swing_points)} swing points "
+                f"(min_distance: {min_distance} candles)")
     
     return swing_points
 
@@ -80,15 +110,25 @@ def calculate_fibonacci_levels(high_price, low_price, direction='bullish'):
 
 def validate_fibonacci_setup(point1, point2, setup_type):
     """
-    Validate Fibonacci setup based on price relationships
+    Validate Fibonacci setup based on price relationships and distance
     
     Standard Fibonacci Logic:
     - Bullish: Fib 0.0 (swing low) < Fib 1.0 (swing high)
     - Bearish: Fib 0.0 (swing high) > Fib 1.0 (swing low)
     
+    Also validates that points are sufficiently far apart (min_fib_candles).
+    
     Returns:
-        tuple: (is_valid, fib_0_price, fib_1_price)
+        tuple: (is_valid, fib_0_price, fib_1_price, distance_bars)
     """
+    # Check minimum distance between points
+    distance = abs(point2['index'] - point1['index'])
+    min_distance = CONFIG['min_fib_candles']
+    
+    if distance < min_distance:
+        logger.debug(f"Setup rejected: distance ({distance}) < min_distance ({min_distance})")
+        return False, 0, 0, 0
+    
     if setup_type == 'bullish_retracement':
         # Point1 = swing low, Point2 = swing high
         fib_0_price = point1['price']  # Swing low
@@ -106,9 +146,9 @@ def validate_fibonacci_setup(point1, point2, setup_type):
         is_valid = fib_0_price > fib_1_price
     
     else:
-        return False, 0, 0
+        return False, 0, 0, 0
     
-    return is_valid, fib_0_price, fib_1_price
+    return is_valid, fib_0_price, fib_1_price, distance
 
 def find_fibonacci_setups(df, swing_points, current_bar_index=None):
     """
@@ -120,7 +160,7 @@ def find_fibonacci_setups(df, swing_points, current_bar_index=None):
         current_bar_index: Index of current bar in df (default: last bar)
     
     Returns:
-        List of valid Fibonacci setups
+        List of valid Fibonacci setups with min_fib_candles validation
     """
     if len(swing_points) < 2:
         return []
@@ -138,7 +178,7 @@ def find_fibonacci_setups(df, swing_points, current_bar_index=None):
             point1 = swing_points[i]
             point2 = swing_points[j]
             
-            # FIXED: Calculate age using indices relative to same dataframe
+            # Calculate age using indices relative to same dataframe
             age = current_bar_index - point2['index']
             
             if age > CONFIG['max_fib_age']:
@@ -147,7 +187,7 @@ def find_fibonacci_setups(df, swing_points, current_bar_index=None):
             if point1['type'] == 'low' and point2['type'] == 'high':
                 # Potential bullish retracement
                 setup_type = 'bullish_retracement'
-                is_valid, fib_0_price, fib_1_price = validate_fibonacci_setup(
+                is_valid, fib_0_price, fib_1_price, distance = validate_fibonacci_setup(
                     point1, point2, setup_type
                 )
                 
@@ -167,6 +207,7 @@ def find_fibonacci_setups(df, swing_points, current_bar_index=None):
                         'fib_0_price': fib_0_price,
                         'fib_1_price': fib_1_price,
                         'age': age,
+                        'distance': distance,
                         'valid': True,
                         'tested_levels': set()
                     })
@@ -174,7 +215,7 @@ def find_fibonacci_setups(df, swing_points, current_bar_index=None):
             elif point1['type'] == 'high' and point2['type'] == 'low':
                 # Potential bearish retracement
                 setup_type = 'bearish_retracement'
-                is_valid, fib_0_price, fib_1_price = validate_fibonacci_setup(
+                is_valid, fib_0_price, fib_1_price, distance = validate_fibonacci_setup(
                     point1, point2, setup_type
                 )
                 
@@ -194,9 +235,12 @@ def find_fibonacci_setups(df, swing_points, current_bar_index=None):
                         'fib_0_price': fib_0_price,
                         'fib_1_price': fib_1_price,
                         'age': age,
+                        'distance': distance,
                         'valid': True,
                         'tested_levels': set()
                     })
+    
+    logger.debug(f"Found {len(fib_setups)} valid Fibonacci setups after min_fib_candles validation")
     
     return fib_setups
 
@@ -285,14 +329,13 @@ def check_fibonacci_entry(fib_setups, df, current_index, trend):
         
         signal_type = fib_reaction['type']
         
-        # FIXED: Proper trend alignment check
+        # Proper trend alignment check
         if trend == 'bullish' and signal_type != 'long':
             continue
         elif trend == 'bearish' and signal_type != 'short':
             continue
         elif trend == 'neutral':
-            # In neutral trend, we could allow both or be more selective
-            # For now, let's be conservative and skip neutral trends
+            # In neutral trend, be conservative and skip
             continue
         
         return fib_reaction
@@ -316,7 +359,7 @@ class FibonacciTracker:
             (current_time - self.last_analysis_time).total_seconds() > 300):
             
             recent_df = df.tail(CONFIG['fib_lookback'] * 3).copy()
-            recent_df = recent_df.reset_index(drop=True)  # Reset indices for clean calculation
+            recent_df = recent_df.reset_index(drop=True)
             
             swing_points = identify_swing_points(recent_df, lookback=8)
             
@@ -337,7 +380,8 @@ class FibonacciTracker:
                     f"  {setup['type']}: "
                     f"Fib 0.0={setup['fib_0_price']:.5f}, "
                     f"Fib 1.0={setup['fib_1_price']:.5f}, "
-                    f"Age={setup['age']} bars"
+                    f"Age={setup['age']} bars, "
+                    f"Distance={setup['distance']} bars"
                 )
     
     def get_valid_setups(self):

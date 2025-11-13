@@ -60,15 +60,16 @@ CONFIG = {
     'trend_bearish_threshold': -10,  # Points needed for bearish trend
     
     # Fibonacci Settings
-    'fib_lookback': 30,
+    'fib_lookback': 30,              # Number of candles to look back for swing points
+    'min_fib_candles': 5,            # Minimum candles between swing points (swing point validity)
     'fib_levels': [0.618, 0.705, 0.786],
     'fib_tolerance': 0.0001,
-    'min_swing_size': 0.0005,
-    'max_fib_age': 100,
-    'fib_confirmation_bars': 2,
+    'min_swing_size': 0.0005,        # Minimum price distance for valid swing
+    'max_fib_age': 100,              # Maximum bars ago for Fibonacci setup to be valid
+    'fib_confirmation_bars': 2,      # Bars to confirm Fibonacci level touch
     
     # Risk Management
-    'max_concurrent_trades': 10,
+    'max_concurrent_trades': 8,
     'min_bars_required': 50,
     'trailing_stop': False,
     'trailing_levels': {
@@ -113,6 +114,17 @@ def validate_config():
     for tf in CONFIG['trend_timeframes']:
         if tf not in MT5_TIMEFRAMES:
             raise ValueError(f"Unsupported trend timeframe: {tf}")
+    
+    # Validate Fibonacci settings
+    if CONFIG['min_fib_candles'] < 1:
+        raise ValueError("min_fib_candles must be at least 1")
+    
+    if CONFIG['fib_lookback'] <= CONFIG['min_fib_candles']:
+        raise ValueError(f"fib_lookback ({CONFIG['fib_lookback']}) must be greater than "
+                        f"min_fib_candles ({CONFIG['min_fib_candles']})")
+    
+    if CONFIG['max_fib_age'] <= 0:
+        raise ValueError("max_fib_age must be positive")
     
     # Validate manual trend settings
     if CONFIG['use_manual_trend']:
@@ -191,3 +203,10 @@ def validate_config():
         if abs(CONFIG['trend_bearish_threshold']) > max_total_points * 0.7:
             logger.warning(f"⚠️  Bearish threshold is high ({abs(CONFIG['trend_bearish_threshold'])}). "
                           f"May result in fewer trades.")
+    
+    # Log Fibonacci configuration
+    logger.info(f"Fibonacci Settings:")
+    logger.info(f"  Lookback period: {CONFIG['fib_lookback']} candles")
+    logger.info(f"  Min candles between swings: {CONFIG['min_fib_candles']} candles")
+    logger.info(f"  Max setup age: {CONFIG['max_fib_age']} bars")
+    logger.info(f"  Fibonacci levels: {CONFIG['fib_levels']}")
