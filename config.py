@@ -21,16 +21,16 @@ except ImportError:
 # ----------------------------- CONFIG -----------------------------
 CONFIG = {
     # Trading Parameters
-    'symbol': 'USDCAD',
-    'backtest': False,
-    'start': '2024-06-25',
-    'end': '2025-06-30',
-    'capital': 5000.0,
-    'risk_pct': 0.5,
+    'symbol': 'USDCAD',  # Trading Symbol
+    'backtest': False,  # Set to True for Backtesting, False for Live Trading
+    'start': '2024-06-25',  # Start Date For Backtest, Format: YYYY-MM-DD
+    'end': '2025-06-30',    # End Date For Backtest, Format: YYYY-MM-DD
+    'capital': 5000.0,  # Initial Capital for Backtesting
+    'risk_pct': 0.5,  # Risk per trade in percentage
     
     # Timeframes
-    'timeframe_entry': 'M15',
-    'trend_timeframes': ['D1', 'H4', 'H1'],
+    'timeframe_entry': 'M15',  # Entry timeframe
+    'trend_timeframes': ['D1', 'H4', 'H1'],  # Timeframes used for trend analysis
     
     # Technical Indicators
     'boll_period': 20,
