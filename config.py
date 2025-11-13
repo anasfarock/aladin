@@ -4,6 +4,7 @@ Updated with Point-Based Trend System, Manual Trend Override, and Fundamental An
 """
 
 import logging
+import os
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -17,6 +18,17 @@ except ImportError:
     mt5 = None
     MT5_AVAILABLE = False
     logger.warning("MetaTrader5 package not available. Install with: pip install MetaTrader5")
+
+# Load environment variables from a .env file if python-dotenv is installed.
+# This lets you put keys in a .env file (e.g. NEWSAPI_KEY=...) or set them
+# in your OS environment and the config will pick them up.
+try:
+    from dotenv import load_dotenv
+    load_dotenv()  # will load variables from a .env file if present
+    logger.info("Loaded environment variables from .env (if present)")
+except Exception:
+    # If python-dotenv is not installed, environment variables must be set
+    logger.info("python-dotenv not available; falling back to OS environment variables")
 
 # ----------------------------- CONFIG -----------------------------
 CONFIG = {
@@ -69,7 +81,7 @@ CONFIG = {
     
     # ===== FUNDAMENTAL & SENTIMENT ANALYSIS SETTINGS (NEW) =====
     'use_fundamental_analysis': True,      # Enable/disable fundamental analysis
-    'use_sentiment_analysis': True,        # Enable/disable news/social sentiment
+    'use_sentiment_analysis': False,        # Enable/disable news/social sentiment
     'use_macro_filter': True,              # Use macro analysis as trade filter
     
     # Macro Analysis Weights (how important macro vs technical)
@@ -91,13 +103,16 @@ CONFIG = {
     'interest_rate_update_freq': 'weekly', # How often to update rates
     'cot_extreme_threshold': 0.75,         # COT positioning extreme threshold
     
-    # API Configuration for F_Analysis (empty = disabled, set your keys)
-    'newsapi_key': 'your_newsapi_key',                     # Get from newsapi.org
-    'alpha_vantage_key': 'your_alpha_vantage_key',         # Get from alphavantage.co
-    'twitter_api_key': 'your_twitter_api_key',             # Get from Twitter Developer Portal
-    'twitter_api_secret': 'your_twitter_api_secret',       # Get from Twitter Developer Portal
-    'reddit_client_id': 'your_reddit_client_id',           # Get from Reddit Developer Portal
-    'reddit_client_secret': 'your_reddit_client_secret',   # Get from Reddit Developer Portal
+    # API Configuration for F_Analysis (empty = disabled).
+    # Prefer setting these in your environment or a .env file. Example .env keys:
+    # NEWSAPI_KEY, ALPHA_VANTAGE_KEY, TWITTER_API_KEY, TWITTER_API_SECRET,
+    # REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET
+    'newsapi_key': os.getenv('NEWSAPI_KEY', ''),
+    'alpha_vantage_key': os.getenv('ALPHA_VANTAGE_KEY', ''),
+    'twitter_api_key': os.getenv('TWITTER_API_KEY', ''),
+    'twitter_api_secret': os.getenv('TWITTER_API_SECRET', ''),
+    'reddit_client_id': os.getenv('REDDIT_CLIENT_ID', ''),
+    'reddit_client_secret': os.getenv('REDDIT_CLIENT_SECRET', ''),
     
     # Macro Analysis Features Toggle
     'analyze_cot_reports': True,           # Analyze COT positioning
@@ -112,7 +127,7 @@ CONFIG = {
     
     # Macro Bias Filtering (skip trades against strong macro signals)
     'skip_trades_against_macro': False,    # If True, skip trades against macro bias
-    'macro_bias_confidence_required': 70,  # Confidence level required to skip
+    'macro_bias_confidence_required': 60,  # Confidence level required to skip
     
     # Risk Management
     'max_concurrent_trades': 8,

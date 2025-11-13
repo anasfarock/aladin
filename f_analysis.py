@@ -281,9 +281,12 @@ class NewsSentimentAnalyzer:
             logger.debug(f"Alpha Vantage fetch error: {e}")
         return []
     
-    def _analyze_social_media(self) -> Dict:
+    def _analyze_social_media(self, symbol: str) -> Dict:
         """
         Analyze sentiment from Twitter/X and Reddit
+        
+        Args:
+            symbol: Trading pair (e.g., 'EURUSD')
         
         Returns: {
             'score': float (-100 to +100),
@@ -292,7 +295,7 @@ class NewsSentimentAnalyzer:
             'tweet_count': int
         }
         """
-        logger.debug("Analyzing social media sentiment...")
+        logger.debug(f"Analyzing social media sentiment for {symbol}...")
         
         try:
             twitter_sentiment = self._analyze_twitter()
@@ -529,7 +532,7 @@ class FundamentalAnalyzer:
                               for name, score, weight in components},
                 'cot_signal': cot_signal,
                 'interest_rate_diff': interest_diff,
-                'upcoming_events': upcoming_events[:5],  # Next 5 events
+                'upcoming_events': upcoming_events.get('upcoming_events', [])[:5],  # Next 5 events
                 'macro_factors': macro_factors,
                 'outlook': self._generate_outlook(total_score, symbol)
             }
