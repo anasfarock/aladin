@@ -1,6 +1,6 @@
 """
 Configuration Module for MT5 ICT Fibonacci Trading Bot
-Updated with Point-Based Trend System and Manual Trend Override
+Updated with Point-Based Trend System, Manual Trend Override, and Fundamental Analysis
 """
 
 import logging
@@ -40,7 +40,7 @@ CONFIG = {
     'ma_fast': 9,
     'ma_slow': 18,
     
-    # Manual Trend Override (NEW)
+    # Manual Trend Override
     'use_manual_trend': False,  # Set to True to override automatic trend analysis
     'manual_trend': 'bullish',  # Options: 'bullish', 'bearish', 'neutral'
     
@@ -51,26 +51,68 @@ CONFIG = {
     'use_ma_for_trend': True,
     
     # Point-Based Trend System
-    # Total max points: (3+3+2+2) * (3+2+1) = 60 points
-    # Recommended thresholds:
-    # - Conservative: ±12 points (strong trend required)
-    # - Moderate: ±8 points (balanced)
-    # - Aggressive: ±5 points (trade more setups)
     'trend_bullish_threshold': 10,   # Points needed for bullish trend
     'trend_bearish_threshold': -10,  # Points needed for bearish trend
     
     # Fibonacci Settings
     'fib_lookback': 30,              # Number of candles to look back for swing points
-    'min_fib_candles': 5,            # Minimum candles between swing points (swing point validity)
+    'min_fib_candles': 5,            # Minimum candles between swing points
     'fib_levels': [0.618, 0.705, 0.786],
     'fib_tolerance': 0.0001,
     'min_swing_size': 0.0005,        # Minimum price distance for valid swing
     'max_fib_age': 100,              # Maximum bars ago for Fibonacci setup to be valid
     'fib_confirmation_bars': 2,      # Bars to confirm Fibonacci level touch
     
-    # Chart Visualization Settings (NEW)
+    # Chart Visualization Settings
     'export_fib_charts': True,       # Export Fibonacci charts as HTML files
     'chart_output_dir': 'fib_charts', # Directory to save charts
+    
+    # ===== FUNDAMENTAL & SENTIMENT ANALYSIS SETTINGS (NEW) =====
+    'use_fundamental_analysis': True,      # Enable/disable fundamental analysis
+    'use_sentiment_analysis': True,        # Enable/disable news/social sentiment
+    'use_macro_filter': True,              # Use macro analysis as trade filter
+    
+    # Macro Analysis Weights (how important macro vs technical)
+    'macro_weight': 0.35,                  # 35% macro analysis influence
+    'technical_weight': 0.65,              # 65% technical analysis influence
+    
+    # Macro Signal Thresholds
+    'macro_bullish_threshold': 15,         # Score needed for bullish macro signal
+    'macro_bearish_threshold': -15,        # Score needed for bearish macro signal
+    'macro_confidence_min': 40,            # Minimum confidence to use macro filter
+    
+    # Sentiment Analysis Settings
+    'sentiment_lookback_hours': 24,        # Hours to look back for news
+    'sentiment_min_articles': 3,           # Minimum articles for valid sentiment
+    'sentiment_confidence_required': 30,   # Min confidence to use sentiment
+    
+    # Fundamental Analysis Settings
+    'fundamental_lookback_days': 7,        # Days for fundamental data
+    'interest_rate_update_freq': 'weekly', # How often to update rates
+    'cot_extreme_threshold': 0.75,         # COT positioning extreme threshold
+    
+    # API Configuration for F_Analysis (empty = disabled, set your keys)
+    'newsapi_key': 'your_newsapi_key',                     # Get from newsapi.org
+    'alpha_vantage_key': 'your_alpha_vantage_key',         # Get from alphavantage.co
+    'twitter_api_key': 'your_twitter_api_key',             # Get from Twitter Developer Portal
+    'twitter_api_secret': 'your_twitter_api_secret',       # Get from Twitter Developer Portal
+    'reddit_client_id': 'your_reddit_client_id',           # Get from Reddit Developer Portal
+    'reddit_client_secret': 'your_reddit_client_secret',   # Get from Reddit Developer Portal
+    
+    # Macro Analysis Features Toggle
+    'analyze_cot_reports': True,           # Analyze COT positioning
+    'analyze_interest_rates': True,        # Analyze rate differentials
+    'analyze_economic_events': True,       # Watch economic calendar
+    'analyze_macro_factors': True,         # Analyze GDP, inflation, etc.
+    
+    # News & Social Media Analysis Toggle
+    'analyze_news': True,                  # Analyze financial news
+    'analyze_twitter': False,              # Analyze Twitter (requires API key)
+    'analyze_reddit': False,               # Analyze Reddit (requires API key)
+    
+    # Macro Bias Filtering (skip trades against strong macro signals)
+    'skip_trades_against_macro': False,    # If True, skip trades against macro bias
+    'macro_bias_confidence_required': 70,  # Confidence level required to skip
     
     # Risk Management
     'max_concurrent_trades': 8,
@@ -89,6 +131,10 @@ CONFIG = {
     'max_retries': 3,
     'retry_delay': 0.5,
     'use_market_execution': True,
+    
+    # Logging & Display
+    'verbose_macro_analysis': True,        # Detailed macro analysis logging
+    'show_macro_divergence_warnings': True, # Warn on tech/macro divergence
 }
 
 def get_mt5_timeframes():
@@ -174,14 +220,6 @@ def validate_config():
             raise ValueError("Bearish threshold must be negative")
         
         # Calculate max possible points
-        indicators_count = sum(trend_indicators_enabled)
-        max_points_per_indicator = {
-            'ma': 3,
-            'rsi': 3,
-            'vwap': 2,
-            'bb': 2
-        }
-        
         active_indicators = []
         if CONFIG['use_ma_for_trend']:
             active_indicators.append('ma')
@@ -192,21 +230,54 @@ def validate_config():
         if CONFIG['use_bollinger_for_trend']:
             active_indicators.append('bb')
         
+        max_points_per_indicator = {'ma': 3, 'rsi': 3, 'vwap': 2, 'bb': 2}
         max_points_per_tf = sum(max_points_per_indicator[ind] for ind in active_indicators)
-        max_total_points = max_points_per_tf * 6  # (D1*3 + H4*2 + H1*1)
+        max_total_points = max_points_per_tf * 6
         
         logger.info(f"Point-Based Trend System:")
         logger.info(f"  Max possible points: ±{max_total_points}")
         logger.info(f"  Bullish threshold: {CONFIG['trend_bullish_threshold']} points")
         logger.info(f"  Bearish threshold: {CONFIG['trend_bearish_threshold']} points")
         
-        # Warn if thresholds are too high
         if abs(CONFIG['trend_bullish_threshold']) > max_total_points * 0.7:
             logger.warning(f"⚠️  Bullish threshold is high ({CONFIG['trend_bullish_threshold']}). "
                           f"May result in fewer trades.")
         if abs(CONFIG['trend_bearish_threshold']) > max_total_points * 0.7:
             logger.warning(f"⚠️  Bearish threshold is high ({abs(CONFIG['trend_bearish_threshold'])}). "
                           f"May result in fewer trades.")
+    
+    # Validate macro analysis settings
+    if CONFIG['use_fundamental_analysis'] or CONFIG['use_sentiment_analysis']:
+        logger.info("="*70)
+        logger.info("📊 FUNDAMENTAL & SENTIMENT ANALYSIS ENABLED")
+        logger.info("="*70)
+        
+        if CONFIG['use_sentiment_analysis']:
+            logger.info("✓ News & Social Sentiment Analysis: ACTIVE")
+            if CONFIG['newsapi_key']:
+                logger.info("  - NewsAPI configured")
+            if CONFIG['alpha_vantage_key']:
+                logger.info("  - Alpha Vantage configured")
+            if CONFIG['twitter_api_key']:
+                logger.info("  - Twitter API configured")
+            if CONFIG['reddit_client_id']:
+                logger.info("  - Reddit API configured")
+        
+        if CONFIG['use_fundamental_analysis']:
+            logger.info("✓ Fundamental Analysis: ACTIVE")
+            if CONFIG['analyze_cot_reports']:
+                logger.info("  - COT Reports: YES")
+            if CONFIG['analyze_interest_rates']:
+                logger.info("  - Interest Rate Differential: YES")
+            if CONFIG['analyze_economic_events']:
+                logger.info("  - Economic Calendar: YES")
+            if CONFIG['analyze_macro_factors']:
+                logger.info("  - Macro Factors: YES")
+        
+        if CONFIG['use_macro_filter']:
+            logger.info(f"✓ Macro Filter: ACTIVE (Confidence threshold: {CONFIG['macro_confidence_min']}%)")
+        
+        logger.info("="*70)
     
     # Log Fibonacci configuration
     logger.info(f"Fibonacci Settings:")
