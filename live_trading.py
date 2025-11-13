@@ -3,6 +3,7 @@ Live Trading Engine - FIXED WITH ENHANCED FIBONACCI DISPLAY
 Shows complete Fibonacci swing range (0.0 and 1.0 levels) with entry level
 Fixed index handling for proper Fibonacci calculations
 Updated to support Manual Trend Override
+Updated to support Chart Export (HTML visualization)
 """
 
 import time
@@ -17,6 +18,14 @@ from risk_management import (
     validate_trade_setup,
     check_max_positions_reached
 )
+
+# IMPORT CHART EXPORTER (HTML/PNG visualization)
+try:
+    from fib_visual_export import export_fibonacci_chart
+    CHART_EXPORTER_AVAILABLE = True
+except ImportError:
+    logger.warning("Chart exporter not available. Install with: pip install plotly kaleido")
+    CHART_EXPORTER_AVAILABLE = False
 
 if MT5_AVAILABLE:
     from mt5_handler import (
@@ -36,7 +45,7 @@ def live_run_once(symbol):
     
     ENHANCED: Now displays complete Fibonacci swing information
     FIXED: Proper index handling in Fibonacci calculations
-    UPDATED: Support for manual trend override
+    UPDATED: Support for manual trend override + Chart Export
     """
     # Monitor existing positions first
     monitor_live_positions(symbol)
@@ -180,6 +189,16 @@ def live_run_once(symbol):
         
         logger.info("="*70)
         
+        # EXPORT FIBONACCI CHART AS HTML
+        if CHART_EXPORTER_AVAILABLE and CONFIG.get('export_fib_charts', True):
+            logger.debug("Exporting Fibonacci chart...")
+            try:
+                chart_file = export_fibonacci_chart(symbol, df_entry, valid_setups, entry_signal)
+                if chart_file:
+                    logger.info(f"✓ Chart exported to: {chart_file}")
+            except Exception as e:
+                logger.warning(f"Could not export chart: {e}")
+        
         # Calculate stops and targets
         if signal_type == 'long':
             # For long: Stop below Fib level
@@ -298,6 +317,13 @@ def start_live_trading(symbol=None):
     logger.info(f"Min R:R Ratio: {CONFIG['min_rr_ratio']}")
     logger.info(f"Trailing Stop: {'Enabled' if CONFIG['trailing_stop'] else 'Disabled'}")
     logger.info(f"Max Concurrent Trades: {CONFIG['max_concurrent_trades']}")
+    
+    # Display chart export status
+    if CHART_EXPORTER_AVAILABLE:
+        logger.info(f"Chart Export: {'Enabled' if CONFIG.get('export_fib_charts', True) else 'Disabled'}")
+    else:
+        logger.info("Chart Export: Not Available (install plotly: pip install plotly)")
+    
     logger.info("="*60)
     
     try:

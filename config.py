@@ -68,6 +68,10 @@ CONFIG = {
     'max_fib_age': 100,              # Maximum bars ago for Fibonacci setup to be valid
     'fib_confirmation_bars': 2,      # Bars to confirm Fibonacci level touch
     
+    # Chart Visualization Settings (NEW)
+    'export_fib_charts': True,       # Export Fibonacci charts as HTML files
+    'chart_output_dir': 'fib_charts', # Directory to save charts
+    
     # Risk Management
     'max_concurrent_trades': 8,
     'min_bars_required': 50,
