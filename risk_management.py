@@ -199,7 +199,7 @@ def validate_trade_setup(entry_price, stop_price, tp_price, side):
 
 def check_max_positions_reached(symbol):
     """
-    Check if maximum number of concurrent positions is reached
+    Check if maximum number of concurrent positions is reached (global limit)
     
     Returns:
         bool: True if max reached
@@ -209,7 +209,32 @@ def check_max_positions_reached(symbol):
     
     positions = get_open_positions(symbol=symbol)
     
-    # Count only our bot's positions
+    # Count only our bot's positions (regardless of symbol)
     our_positions = [p for p in positions if p.magic == 234000]
     
     return len(our_positions) >= CONFIG['max_concurrent_trades']
+
+def check_max_positions_reached_for_symbol(symbol):
+    """
+    Check if maximum number of concurrent positions for a specific symbol is reached
+    
+    Returns:
+        tuple: (limit_reached, current_count, max_allowed)
+    """
+    if not MT5_AVAILABLE:
+        return False, 0, CONFIG['max_concurrent_trades_of_same_pair']
+    
+    try:
+        positions = get_open_positions(symbol=symbol)
+        
+        # Count only our bot's positions for this specific symbol
+        our_positions = [p for p in positions if p.magic == 234000 and p.symbol == symbol]
+        
+        current_count = len(our_positions)
+        max_allowed = CONFIG['max_concurrent_trades_of_same_pair']
+        
+        return current_count >= max_allowed, current_count, max_allowed
+    
+    except Exception as e:
+        logger.error(f"Error checking positions for symbol {symbol}: {e}")
+        return False, 0, CONFIG['max_concurrent_trades_of_same_pair']

@@ -20,29 +20,26 @@ except ImportError:
     logger.warning("MetaTrader5 package not available. Install with: pip install MetaTrader5")
 
 # Load environment variables from a .env file if python-dotenv is installed.
-# This lets you put keys in a .env file (e.g. NEWSAPI_KEY=...) or set them
-# in your OS environment and the config will pick them up.
 try:
     from dotenv import load_dotenv
-    load_dotenv()  # will load variables from a .env file if present
+    load_dotenv()
     logger.info("Loaded environment variables from .env (if present)")
 except Exception:
-    # If python-dotenv is not installed, environment variables must be set
     logger.info("python-dotenv not available; falling back to OS environment variables")
 
 # ----------------------------- CONFIG -----------------------------
 CONFIG = {
     # Trading Parameters
-    'symbol': 'USDCAD',  # Trading Symbol
-    'backtest': False,  # Set to True for Backtesting, False for Live Trading
-    'start': '2024-06-25',  # Start Date For Backtest, Format: YYYY-MM-DD
-    'end': '2025-06-30',    # End Date For Backtest, Format: YYYY-MM-DD
-    'capital': 5000.0,  # Initial Capital for Backtesting
-    'risk_pct': 0.5,  # Risk per trade in percentage
+    'symbol': 'USDCAD',
+    'backtest': False,
+    'start': '2024-06-25',
+    'end': '2025-06-30',
+    'capital': 5000.0,
+    'risk_pct': 0.5,
     
     # Timeframes
-    'timeframe_entry': 'M15',  # Entry timeframe
-    'trend_timeframes': ['D1', 'H4', 'H1'],  # Timeframes used for trend analysis
+    'timeframe_entry': 'M15',
+    'trend_timeframes': ['D1', 'H4', 'H1'],
     
     # Technical Indicators
     'boll_period': 20,
@@ -53,60 +50,57 @@ CONFIG = {
     'ma_slow': 18,
     
     # Manual Trend Override
-    'use_manual_trend': False,  # Set to True to override automatic trend analysis
-    'manual_trend': 'bullish',  # Options: 'bullish', 'bearish', 'neutral'
+    'use_manual_trend': False,
+    'manual_trend': 'bullish',
     
-    # Trend Analysis Toggles (Used only when use_manual_trend=False)
+    # Trend Analysis Toggles
     'use_rsi_for_trend': True,
     'use_vwap_for_trend': True,
     'use_bollinger_for_trend': True,
     'use_ma_for_trend': True,
     
     # Point-Based Trend System
-    'trend_bullish_threshold': 10,   # Points needed for bullish trend
-    'trend_bearish_threshold': -10,  # Points needed for bearish trend
+    'trend_bullish_threshold': 10,
+    'trend_bearish_threshold': -10,
     
     # Fibonacci Settings
-    'fib_lookback': 30,              # Number of candles to look back for swing points
-    'min_fib_candles': 5,            # Minimum candles between swing points
+    'fib_lookback': 30,
+    'min_fib_candles': 5,
     'fib_levels': [0.618, 0.705, 0.786],
     'fib_tolerance': 0.0001,
-    'min_swing_size': 0.0005,        # Minimum price distance for valid swing
-    'max_fib_age': 100,              # Maximum bars ago for Fibonacci setup to be valid
-    'fib_confirmation_bars': 2,      # Bars to confirm Fibonacci level touch
+    'min_swing_size': 0.0005,
+    'max_fib_age': 100,
+    'fib_confirmation_bars': 2,
     
     # Chart Visualization Settings
-    'export_fib_charts': True,       # Export Fibonacci charts as HTML files
-    'chart_output_dir': 'fib_charts', # Directory to save charts
+    'export_fib_charts': True,
+    'chart_output_dir': 'fib_charts',
     
-    # ===== FUNDAMENTAL & SENTIMENT ANALYSIS SETTINGS (NEW) =====
-    'use_fundamental_analysis': False,      # Enable/disable fundamental analysis
-    'use_sentiment_analysis': False,        # Enable/disable news/social sentiment
-    'use_macro_filter': False,              # Use macro analysis as trade filter
+    # ===== FUNDAMENTAL & SENTIMENT ANALYSIS SETTINGS =====
+    'use_fundamental_analysis': False,
+    'use_sentiment_analysis': False,
+    'use_macro_filter': False,
     
-    # Macro Analysis Weights (how important macro vs technical)
-    'macro_weight': 0.35,                  # 35% macro analysis influence
-    'technical_weight': 0.65,              # 65% technical analysis influence
+    # Macro Analysis Weights
+    'macro_weight': 0.35,
+    'technical_weight': 0.65,
     
     # Macro Signal Thresholds
-    'macro_bullish_threshold': 15,         # Score needed for bullish macro signal
-    'macro_bearish_threshold': -15,        # Score needed for bearish macro signal
-    'macro_confidence_min': 40,            # Minimum confidence to use macro filter
+    'macro_bullish_threshold': 15,
+    'macro_bearish_threshold': -15,
+    'macro_confidence_min': 40,
     
     # Sentiment Analysis Settings
-    'sentiment_lookback_hours': 24,        # Hours to look back for news
-    'sentiment_min_articles': 3,           # Minimum articles for valid sentiment
-    'sentiment_confidence_required': 30,   # Min confidence to use sentiment
+    'sentiment_lookback_hours': 24,
+    'sentiment_min_articles': 3,
+    'sentiment_confidence_required': 30,
     
     # Fundamental Analysis Settings
-    'fundamental_lookback_days': 7,        # Days for fundamental data
-    'interest_rate_update_freq': 'weekly', # How often to update rates
-    'cot_extreme_threshold': 0.75,         # COT positioning extreme threshold
+    'fundamental_lookback_days': 7,
+    'interest_rate_update_freq': 'weekly',
+    'cot_extreme_threshold': 0.75,
     
-    # API Configuration for F_Analysis (empty = disabled).
-    # Prefer setting these in your environment or a .env file. Example .env keys:
-    # NEWSAPI_KEY, ALPHA_VANTAGE_KEY, TWITTER_API_KEY, TWITTER_API_SECRET,
-    # REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET
+    # API Configuration
     'newsapi_key': os.getenv('NEWSAPI_KEY', ''),
     'alpha_vantage_key': os.getenv('ALPHA_VANTAGE_KEY', ''),
     'twitter_api_key': os.getenv('TWITTER_API_KEY', ''),
@@ -115,22 +109,23 @@ CONFIG = {
     'reddit_client_secret': os.getenv('REDDIT_CLIENT_SECRET', ''),
     
     # Macro Analysis Features Toggle
-    'analyze_cot_reports': True,           # Analyze COT positioning
-    'analyze_interest_rates': True,        # Analyze rate differentials
-    'analyze_economic_events': True,       # Watch economic calendar
-    'analyze_macro_factors': True,         # Analyze GDP, inflation, etc.
+    'analyze_cot_reports': True,
+    'analyze_interest_rates': True,
+    'analyze_economic_events': True,
+    'analyze_macro_factors': True,
     
     # News & Social Media Analysis Toggle
-    'analyze_news': True,                  # Analyze financial news
-    'analyze_twitter': False,              # Analyze Twitter (requires API key)
-    'analyze_reddit': False,               # Analyze Reddit (requires API key)
+    'analyze_news': True,
+    'analyze_twitter': False,
+    'analyze_reddit': False,
     
-    # Macro Bias Filtering (skip trades against strong macro signals)
-    'skip_trades_against_macro': False,    # If True, skip trades against macro bias
-    'macro_bias_confidence_required': 60,  # Confidence level required to skip
+    # Macro Bias Filtering
+    'skip_trades_against_macro': False,
+    'macro_bias_confidence_required': 60,
     
     # Risk Management
-    'max_concurrent_trades': 8,
+    'max_concurrent_trades': 8,                    # Max total concurrent trades across all pairs
+    'max_concurrent_trades_of_same_pair': 2,      # Max concurrent trades on a single pair
     'min_bars_required': 50,
     'trailing_stop': False,
     'trailing_levels': {
@@ -148,8 +143,8 @@ CONFIG = {
     'use_market_execution': True,
     
     # Logging & Display
-    'verbose_macro_analysis': True,        # Detailed macro analysis logging
-    'show_macro_divergence_warnings': True, # Warn on tech/macro divergence
+    'verbose_macro_analysis': True,
+    'show_macro_divergence_warnings': True,
 }
 
 def get_mt5_timeframes():
@@ -190,6 +185,17 @@ def validate_config():
     
     if CONFIG['max_fib_age'] <= 0:
         raise ValueError("max_fib_age must be positive")
+    
+    # Validate concurrent trades settings
+    if CONFIG['max_concurrent_trades'] <= 0:
+        raise ValueError("max_concurrent_trades must be positive")
+    
+    if CONFIG['max_concurrent_trades_of_same_pair'] <= 0:
+        raise ValueError("max_concurrent_trades_of_same_pair must be positive")
+    
+    if CONFIG['max_concurrent_trades_of_same_pair'] > CONFIG['max_concurrent_trades']:
+        raise ValueError(f"max_concurrent_trades_of_same_pair ({CONFIG['max_concurrent_trades_of_same_pair']}) "
+                        f"cannot exceed max_concurrent_trades ({CONFIG['max_concurrent_trades']})")
     
     # Validate manual trend settings
     if CONFIG['use_manual_trend']:
@@ -300,3 +306,8 @@ def validate_config():
     logger.info(f"  Min candles between swings: {CONFIG['min_fib_candles']} candles")
     logger.info(f"  Max setup age: {CONFIG['max_fib_age']} bars")
     logger.info(f"  Fibonacci levels: {CONFIG['fib_levels']}")
+    
+    # Log risk management configuration
+    logger.info(f"Risk Management Settings:")
+    logger.info(f"  Max concurrent trades (total): {CONFIG['max_concurrent_trades']}")
+    logger.info(f"  Max concurrent trades (per pair): {CONFIG['max_concurrent_trades_of_same_pair']}")

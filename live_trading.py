@@ -14,7 +14,8 @@ from risk_management import (
     monitor_live_positions, 
     calculate_position_size,
     validate_trade_setup,
-    check_max_positions_reached
+    check_max_positions_reached,
+    check_max_positions_reached_for_symbol
 )
 
 # Import fundamental & sentiment analysis
@@ -141,8 +142,16 @@ def live_run_once(symbol):
     # Monitor existing positions first
     monitor_live_positions(symbol)
     
+    # Check global max positions limit
     if check_max_positions_reached(symbol):
-        logger.info(f"Max concurrent trades ({CONFIG['max_concurrent_trades']}) reached")
+        logger.info(f"Max concurrent trades ({CONFIG['max_concurrent_trades']}) reached (global limit)")
+        return None
+    
+    # Check per-symbol max positions limit
+    symbol_limit_reached, current_count, max_allowed = check_max_positions_reached_for_symbol(symbol)
+    if symbol_limit_reached:
+        logger.info(f"Max concurrent trades for {symbol} ({max_allowed}) reached. "
+                   f"Current: {current_count}/{max_allowed}")
         return None
     
     try:
@@ -184,6 +193,9 @@ def live_run_once(symbol):
             logger.info(f"Overall Trend: {trend.upper()}")
             logger.info(f"Confidence: {trend_confidence:.1f}%")
             logger.info(f"Total Points: {trend_details['total_points']:+.1f}")
+        
+        # Display per-symbol position limit status
+        logger.info(f"Position Limit: {current_count}/{max_allowed} trades on {symbol}")
         
         # ===== MACRO ANALYSIS SECTION =====
         macro_analysis = _get_macro_analysis(symbol)
@@ -396,7 +408,9 @@ def start_live_trading(symbol=None):
         else:
             logger.warning("⚠️  Macro analysis requested but f_analysis not available")
     
-    logger.info(f"Max Concurrent Trades: {CONFIG['max_concurrent_trades']}")
+    # Display position limits
+    logger.info(f"Max Concurrent Trades (Global): {CONFIG['max_concurrent_trades']}")
+    logger.info(f"Max Concurrent Trades (Per Symbol): {CONFIG['max_concurrent_trades_of_same_pair']}")
     logger.info("="*60)
     
     try:
