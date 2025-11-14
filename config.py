@@ -69,7 +69,7 @@ CONFIG = {
     'fib_levels': [0.618, 0.705, 0.786],
     'fib_tolerance': 0.0001,
     'min_swing_size': 0.0005,
-    'max_fib_age': 100,
+    'max_fib_age': 50,
     'fib_confirmation_bars': 2,
     
     # Chart Visualization Settings
@@ -125,7 +125,7 @@ CONFIG = {
     
     # Risk Management
     'max_concurrent_trades': 8,                    # Max total concurrent trades across all pairs
-    'max_concurrent_trades_of_same_pair': 2,      # Max concurrent trades on a single pair
+    'max_concurrent_trades_of_same_pair': 3,      # Max concurrent trades on a single pair
     'min_bars_required': 50,
     'trailing_stop': False,
     'trailing_levels': {
