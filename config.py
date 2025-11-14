@@ -80,9 +80,9 @@ CONFIG = {
     'chart_output_dir': 'fib_charts', # Directory to save charts
     
     # ===== FUNDAMENTAL & SENTIMENT ANALYSIS SETTINGS (NEW) =====
-    'use_fundamental_analysis': True,      # Enable/disable fundamental analysis
+    'use_fundamental_analysis': False,      # Enable/disable fundamental analysis
     'use_sentiment_analysis': False,        # Enable/disable news/social sentiment
-    'use_macro_filter': True,              # Use macro analysis as trade filter
+    'use_macro_filter': False,              # Use macro analysis as trade filter
     
     # Macro Analysis Weights (how important macro vs technical)
     'macro_weight': 0.35,                  # 35% macro analysis influence
