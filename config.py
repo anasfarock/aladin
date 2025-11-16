@@ -50,10 +50,10 @@ CONFIG = {
     'ma_slow': 18,
     
     # ===== ADX SETTINGS =====
-    'adx_period': 50,                          # ADX calculation period
+    'adx_period': 30,                          # ADX calculation period
     'use_adx_filter': True,                    # Enable/disable ADX filter
     'adx_strength_threshold': 25,              # Minimum ADX value to confirm strong trend
-    'adx_extreme_threshold': 80,              # ADX value indicating very strong trend
+    'adx_extreme_threshold': 80,               # ADX value indicating very strong trend
     'adx_weak_threshold': 20,                  # ADX value below which trend is weak
     'adx_di_crossover_check': True,            # Check if +DI > -DI for bullish, -DI > +DI for bearish
     'adx_confirmation_bars': 2,                # Number of bars ADX must stay above threshold
