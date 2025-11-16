@@ -1,7 +1,6 @@
 """
-Live Trading Engine - Enhanced with Fundamental & Sentiment Analysis
-Shows complete Fibonacci swing range with macro analysis confirmation
-Updated to integrate f_analysis module for news, social media, and fundamental factors
+Live Trading Engine - Enhanced with ADX Trend Confirmation
+Shows ADX strength validation before executing trades
 """
 
 import time
@@ -9,7 +8,13 @@ import logging
 from config import CONFIG, MT5_AVAILABLE, logger
 from indicators import compute_indicators
 from fibonacci import FibonacciTracker, check_fibonacci_entry
-from trend_analysis import determine_trend, get_trend_details, get_trend_confidence
+from trend_analysis import (
+    determine_trend, 
+    get_trend_details, 
+    get_trend_confidence,
+    check_adx_confirmation,
+    check_adx_across_timeframes
+)
 from risk_management import (
     monitor_live_positions, 
     calculate_position_size,
@@ -46,7 +51,7 @@ if MT5_AVAILABLE:
 # Global Fibonacci tracker
 fib_tracker = FibonacciTracker()
 
-# Macro analysis cache (to avoid repeated API calls)
+# Macro analysis cache
 macro_analysis_cache = {'timestamp': None, 'data': None, 'symbol': None}
 MACRO_CACHE_MINUTES = 60
 
@@ -87,13 +92,6 @@ def _get_macro_analysis(symbol):
 def _check_macro_filter(symbol, technical_trend, macro_analysis):
     """
     Check if macro analysis aligns with technical trend
-    
-    Returns:
-        {
-            'pass_filter': bool,
-            'reason': str,
-            'should_skip': bool
-        }
     """
     if macro_analysis is None:
         return {
@@ -135,9 +133,72 @@ def _check_macro_filter(symbol, technical_trend, macro_analysis):
         'aligned': aligned
     }
 
+def _check_adx_filter(df_d1, df_h4, df_h1, trend):
+    """
+    Check if ADX filter validates the trade setup
+    
+    Returns:
+        {
+            'pass_filter': bool,
+            'reason': str,
+            'adx_analysis': dict,
+            'should_skip': bool
+        }
+    """
+    if not CONFIG.get('use_adx_filter', False):
+        return {
+            'pass_filter': True,
+            'reason': 'ADX filter disabled',
+            'should_skip': False,
+            'adx_analysis': None
+        }
+    
+    # Check ADX across timeframes
+    adx_analysis = check_adx_across_timeframes(df_d1, df_h4, df_h1, trend)
+    
+    # Log ADX analysis if verbose mode enabled
+    if CONFIG.get('verbose_adx_analysis', True):
+        logger.info("")
+        logger.info("="*70)
+        logger.info("📊 ADX TREND STRENGTH ANALYSIS")
+        logger.info("="*70)
+        
+        for tf_name in ['D1', 'H4', 'H1']:
+            adx_check = adx_analysis['timeframes'][tf_name]
+            logger.info(f"\n{tf_name} Timeframe:")
+            logger.info(f"  ADX Value: {adx_check['adx_value']:.2f}")
+            logger.info(f"  Strength: {adx_check['strength'].upper()}")
+            logger.info(f"  +DI: {adx_check['+DI']:.2f}")
+            logger.info(f"  -DI: {adx_check['-DI']:.2f}")
+            logger.info(f"  DI Aligned: {'✓ YES' if adx_check['di_aligned'] else '✗ NO'}")
+            logger.info(f"  Confirmed: {'✓ YES' if adx_check['confirmed'] else '✗ NO'}")
+            logger.info(f"  Status: {adx_check['reason']}")
+    
+    threshold = CONFIG.get('adx_strength_threshold', 25)
+    
+    # Check if D1 ADX is above threshold (most important)
+    d1_adx = adx_analysis['timeframes']['D1']
+    
+    if d1_adx['adx_value'] < threshold:
+        should_skip = True
+        reason = f"⛔ D1 ADX too weak ({d1_adx['adx_value']:.2f} < {threshold}) - Trend not confirmed"
+    elif not d1_adx['di_aligned']:
+        should_skip = True
+        reason = f"⛔ D1 DI lines not aligned with {trend.upper()} trend"
+    else:
+        should_skip = False
+        reason = f"✓ ADX confirms {trend.upper()} trend (D1 ADX: {d1_adx['adx_value']:.2f})"
+    
+    return {
+        'pass_filter': not should_skip,
+        'reason': reason,
+        'should_skip': should_skip,
+        'adx_analysis': adx_analysis
+    }
+
 def live_run_once(symbol):
     """
-    Execute one live trading cycle with macro analysis integration
+    Execute one live trading cycle with ADX and macro analysis integration
     """
     # Monitor existing positions first
     monitor_live_positions(symbol)
@@ -162,7 +223,7 @@ def live_run_once(symbol):
         df_h4 = fetch_live_data(symbol, 'H4', 500)
         df_h1 = fetch_live_data(symbol, 'H1', 500)
         
-        # Compute indicators
+        # Compute indicators (including ADX)
         df_entry = compute_indicators(df_entry)
         df_d1 = compute_indicators(df_d1)
         df_h4 = compute_indicators(df_h4)
@@ -196,6 +257,16 @@ def live_run_once(symbol):
         
         # Display per-symbol position limit status
         logger.info(f"Position Limit: {current_count}/{max_allowed} trades on {symbol}")
+        
+        # ===== ADX FILTER CHECK =====
+        adx_filter_result = _check_adx_filter(df_d1, df_h4, df_h1, trend)
+        
+        if adx_filter_result['should_skip']:
+            logger.warning(f"\n{adx_filter_result['reason']}")
+            logger.info("="*70)
+            return None
+        else:
+            logger.info(f"\n{adx_filter_result['reason']}")
         
         # ===== MACRO ANALYSIS SECTION =====
         macro_analysis = _get_macro_analysis(symbol)
@@ -372,7 +443,7 @@ def live_run_once(symbol):
 
 def start_live_trading(symbol=None):
     """
-    Start the live trading bot with macro analysis
+    Start the live trading bot with ADX and macro analysis
     """
     if not MT5_AVAILABLE:
         logger.error("MetaTrader5 not available. Cannot start live trading.")
@@ -395,6 +466,14 @@ def start_live_trading(symbol=None):
     
     logger.info(f"Risk per Trade: {CONFIG['risk_pct']}%")
     logger.info(f"Min R:R Ratio: {CONFIG['min_rr_ratio']}")
+    
+    # Display ADX status
+    if CONFIG.get('use_adx_filter', False):
+        logger.info(f"\n✓ ADX FILTER: ENABLED")
+        logger.info(f"   Strength Threshold: {CONFIG['adx_strength_threshold']}")
+        logger.info(f"   DI Crossover Check: {'YES' if CONFIG['adx_di_crossover_check'] else 'NO'}")
+    else:
+        logger.info(f"\n🔇 ADX FILTER: DISABLED")
     
     # Display macro analysis status
     if CONFIG['use_fundamental_analysis'] or CONFIG['use_sentiment_analysis']:

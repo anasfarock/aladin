@@ -1,6 +1,6 @@
 """
 Configuration Module for Aladin - MT5 Trading Bot
-Updated with Point-Based Trend System, Manual Trend Override, and Fundamental Analysis
+Updated with Point-Based Trend System, Manual Trend Override, Fundamental Analysis, and ADX
 """
 
 import logging
@@ -32,8 +32,8 @@ CONFIG = {
     # Trading Parameters
     'symbol': 'USDCAD',
     'backtest': False,
-    'start': '2025-11-07',
-    'end': '2025-11-09',
+    'start': '2025-11-10',
+    'end': '2025-11-16',
     'capital': 5000.0,
     'risk_pct': 0.5,
     
@@ -48,6 +48,15 @@ CONFIG = {
     'vwap_period': 20,
     'ma_fast': 9,
     'ma_slow': 18,
+    
+    # ===== ADX SETTINGS =====
+    'adx_period': 50,                          # ADX calculation period
+    'use_adx_filter': True,                    # Enable/disable ADX filter
+    'adx_strength_threshold': 25,              # Minimum ADX value to confirm strong trend
+    'adx_extreme_threshold': 80,              # ADX value indicating very strong trend
+    'adx_weak_threshold': 20,                  # ADX value below which trend is weak
+    'adx_di_crossover_check': True,            # Check if +DI > -DI for bullish, -DI > +DI for bearish
+    'adx_confirmation_bars': 2,                # Number of bars ADX must stay above threshold
     
     # Manual Trend Override
     'use_manual_trend': False,
@@ -145,6 +154,7 @@ CONFIG = {
     # Logging & Display
     'verbose_macro_analysis': True,
     'show_macro_divergence_warnings': True,
+    'verbose_adx_analysis': True,
 }
 
 def get_mt5_timeframes():
@@ -174,9 +184,7 @@ def validate_config():
     settings defined in the CONFIG dictionary. This function ensures that the bot
     operates with valid parameters, preventing common configuration errors at runtime.
     It checks for the availability of MT5, validates timeframe settings, Fibonacci
-    parameters, concurrent trade limits, and trend analysis settings. It also logs
-    key configuration details and warnings for settings that might lead to
-    unexpected behavior.
+    parameters, concurrent trade limits, trend analysis settings, and ADX parameters.
     """
     if not MT5_AVAILABLE and not CONFIG['backtest']:
         raise RuntimeError("MT5 not available for live trading")
@@ -209,6 +217,30 @@ def validate_config():
     if CONFIG['max_concurrent_trades_of_same_pair'] > CONFIG['max_concurrent_trades']:
         raise ValueError(f"max_concurrent_trades_of_same_pair ({CONFIG['max_concurrent_trades_of_same_pair']}) "
                         f"cannot exceed max_concurrent_trades ({CONFIG['max_concurrent_trades']})")
+    
+    # Validate ADX settings
+    if CONFIG['use_adx_filter']:
+        if CONFIG['adx_period'] <= 0:
+            raise ValueError("adx_period must be positive")
+        if CONFIG['adx_strength_threshold'] <= 0:
+            raise ValueError("adx_strength_threshold must be positive")
+        if CONFIG['adx_strength_threshold'] > 100:
+            raise ValueError("adx_strength_threshold must be <= 100")
+        if CONFIG['adx_extreme_threshold'] <= CONFIG['adx_strength_threshold']:
+            raise ValueError(f"adx_extreme_threshold ({CONFIG['adx_extreme_threshold']}) must be > "
+                           f"adx_strength_threshold ({CONFIG['adx_strength_threshold']})")
+        if CONFIG['adx_confirmation_bars'] < 1:
+            raise ValueError("adx_confirmation_bars must be at least 1")
+        
+        logger.info("="*70)
+        logger.info("✓ ADX FILTER ENABLED")
+        logger.info(f"  Period: {CONFIG['adx_period']}")
+        logger.info(f"  Strength Threshold: {CONFIG['adx_strength_threshold']}")
+        logger.info(f"  Extreme Threshold: {CONFIG['adx_extreme_threshold']}")
+        logger.info(f"  Weak Threshold: {CONFIG['adx_weak_threshold']}")
+        logger.info(f"  +DI/-DI Crossover Check: {'YES' if CONFIG['adx_di_crossover_check'] else 'NO'}")
+        logger.info(f"  Confirmation Bars: {CONFIG['adx_confirmation_bars']}")
+        logger.info("="*70)
     
     # Validate manual trend settings
     if CONFIG['use_manual_trend']:

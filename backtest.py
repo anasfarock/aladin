@@ -1,16 +1,17 @@
 """
-Backtesting Module - FIXED INDEX HANDLING
-Historical simulation with corrected dataframe slicing and index alignment
-Updated to support Manual Trend Override
+Backtesting Module - With ADX Trend Confirmation
+Historical simulation with ADX validation and corrected dataframe slicing
+Updated to support Manual Trend Override and ADX Filter
 """
 
 from datetime import datetime, timedelta
 import pandas as pd
 import logging
+import numpy as np
 from config import CONFIG, MT5_TIMEFRAMES, logger
 from indicators import compute_indicators
 from fibonacci import identify_swing_points, find_fibonacci_setups, check_fibonacci_entry
-from trend_analysis import determine_trend
+from trend_analysis import determine_trend, check_adx_across_timeframes
 from risk_management import update_trailing_stop
 from mt5_handler import fetch_mt5_df
 
@@ -23,19 +24,44 @@ def calculate_max_drawdown(equity_curve):
     drawdown = (equity_curve - peak) / peak * 100
     return abs(drawdown.min())
 
+def check_adx_filter_backtest(df_d1, df_h4, df_h1, trend):
+    """
+    Check if ADX filter validates the trade setup during backtest
+    
+    Returns:
+        bool: True if ADX confirms trend, False otherwise
+    """
+    if not CONFIG.get('use_adx_filter', False):
+        return True  # ADX filter disabled, pass all trades
+    
+    try:
+        adx_analysis = check_adx_across_timeframes(df_d1, df_h4, df_h1, trend)
+        
+        # Check D1 ADX - most important
+        d1_adx = adx_analysis['timeframes']['D1']
+        threshold = CONFIG.get('adx_strength_threshold', 25)
+        
+        # Trade passes if:
+        # 1. D1 ADX is above threshold AND
+        # 2. +DI/-DI are aligned with trend
+        adx_confirms = (d1_adx['adx_value'] >= threshold and d1_adx['di_aligned'])
+        
+        return adx_confirms
+    
+    except Exception as e:
+        logger.warning(f"Error checking ADX filter in backtest: {e}")
+        return True  # On error, allow the trade
+
 def backtest(symbol, start, end, timeframe):
     """
-    Run ICT Fibonacci backtest with corrected logic
+    Run ICT Fibonacci backtest with ADX confirmation and corrected logic
     
-    FIXES:
+    FEATURES:
+    - ADX trend confirmation (configurable threshold)
     - Proper index synchronization for Fibonacci setups
     - Entry on next bar open (no lookahead bias)
-    - Consistent data slicing with index reset
-    - Better error handling
-    
-    UPDATED:
-    - Support for manual trend override
-    - Enhanced trend mode display
+    - Manual trend override support
+    - Trailing stops with ADX validation
     
     Args:
         symbol: Trading symbol
@@ -59,6 +85,12 @@ def backtest(symbol, start, end, timeframe):
     else:
         logger.info("Trend Mode: AUTOMATIC (Point-Based System)")
     
+    # Display ADX filter status
+    if CONFIG.get('use_adx_filter', False):
+        logger.info(f"ADX Filter: ENABLED (Threshold: {CONFIG['adx_strength_threshold']})")
+    else:
+        logger.info("ADX Filter: DISABLED")
+    
     tf = MT5_TIMEFRAMES.get(timeframe)
     if tf is None:
         raise ValueError(f'Unsupported timeframe: {timeframe}')
@@ -78,8 +110,8 @@ def backtest(symbol, start, end, timeframe):
         logger.error(f"Data fetch failed: {e}")
         raise
     
-    # Compute indicators
-    logger.info("Computing technical indicators...")
+    # Compute indicators (including ADX)
+    logger.info("Computing technical indicators (including ADX)...")
     df = compute_indicators(df)
     df_d1 = compute_indicators(df_d1)
     df_h4 = compute_indicators(df_h4)
@@ -99,6 +131,7 @@ def backtest(symbol, start, end, timeframe):
     
     # Trend tracking for statistics
     trend_counts = {'bullish': 0, 'bearish': 0, 'neutral': 0}
+    adx_filtered_signals = 0
     
     logger.info(f"Running backtest on {len(df)} bars...")
     
@@ -126,6 +159,7 @@ def backtest(symbol, start, end, timeframe):
             fib_price = pending_entry['fib_price']
             setup_type = pending_entry['setup_type']
             trend_mode = 'manual' if CONFIG.get('use_manual_trend', False) else 'auto'
+            adx_passed = pending_entry.get('adx_passed', False)
             
             # Calculate stops and targets
             if signal_type == 'long':
@@ -153,12 +187,13 @@ def backtest(symbol, start, end, timeframe):
                         'trail_level': None,
                         'fib_level': fib_level,
                         'setup_type': setup_type,
-                        'trend_mode': trend_mode
+                        'trend_mode': trend_mode,
+                        'adx_passed': adx_passed
                     }
                     
                     open_positions.append(position)
                     logger.debug(f"Entered LONG at {entry_price:.5f}, SL: {stop_price:.5f}, TP: {tp_price:.5f}, "
-                               f"Fib: {fib_level}, Trend: {trend_mode}")
+                               f"Fib: {fib_level}, Trend: {trend_mode}, ADX: {'PASS' if adx_passed else 'INFO'}")
             
             else:  # short
                 stop_price = fib_price + (CONFIG['fib_tolerance'] * 3)
@@ -183,12 +218,13 @@ def backtest(symbol, start, end, timeframe):
                         'trail_level': None,
                         'fib_level': fib_level,
                         'setup_type': setup_type,
-                        'trend_mode': trend_mode
+                        'trend_mode': trend_mode,
+                        'adx_passed': adx_passed
                     }
                     
                     open_positions.append(position)
                     logger.debug(f"Entered SHORT at {entry_price:.5f}, SL: {stop_price:.5f}, TP: {tp_price:.5f}, "
-                               f"Fib: {fib_level}, Trend: {trend_mode}")
+                               f"Fib: {fib_level}, Trend: {trend_mode}, ADX: {'PASS' if adx_passed else 'INFO'}")
             
             pending_entry = None
         
@@ -218,7 +254,8 @@ def backtest(symbol, start, end, timeframe):
                         'exit_reason': exit_reason,
                         'fib_level': pos.get('fib_level', 0),
                         'setup_type': pos.get('setup_type', 'unknown'),
-                        'trend_mode': pos.get('trend_mode', 'auto')
+                        'trend_mode': pos.get('trend_mode', 'auto'),
+                        'adx_passed': pos.get('adx_passed', False)
                     })
                     open_positions.remove(pos)
                     continue
@@ -238,7 +275,8 @@ def backtest(symbol, start, end, timeframe):
                         'exit_reason': 'take_profit',
                         'fib_level': pos.get('fib_level', 0),
                         'setup_type': pos.get('setup_type', 'unknown'),
-                        'trend_mode': pos.get('trend_mode', 'auto')
+                        'trend_mode': pos.get('trend_mode', 'auto'),
+                        'adx_passed': pos.get('adx_passed', False)
                     })
                     open_positions.remove(pos)
                     continue
@@ -261,7 +299,8 @@ def backtest(symbol, start, end, timeframe):
                         'exit_reason': exit_reason,
                         'fib_level': pos.get('fib_level', 0),
                         'setup_type': pos.get('setup_type', 'unknown'),
-                        'trend_mode': pos.get('trend_mode', 'auto')
+                        'trend_mode': pos.get('trend_mode', 'auto'),
+                        'adx_passed': pos.get('adx_passed', False)
                     })
                     open_positions.remove(pos)
                     continue
@@ -280,7 +319,8 @@ def backtest(symbol, start, end, timeframe):
                         'exit_reason': 'take_profit',
                         'fib_level': pos.get('fib_level', 0),
                         'setup_type': pos.get('setup_type', 'unknown'),
-                        'trend_mode': pos.get('trend_mode', 'auto')
+                        'trend_mode': pos.get('trend_mode', 'auto'),
+                        'adx_passed': pos.get('adx_passed', False)
                     })
                     open_positions.remove(pos)
                     continue
@@ -338,14 +378,23 @@ def backtest(symbol, start, end, timeframe):
         )
         
         if entry_signal:
+            # Check ADX filter
+            adx_passed = check_adx_filter_backtest(d1_slice, h4_slice, h1_slice, trend)
+            
+            if not adx_passed and CONFIG.get('use_adx_filter', False):
+                adx_filtered_signals += 1
+                logger.debug(f"Signal filtered by ADX at bar {idx}")
+                continue
+            
             # Store for entry on NEXT bar
             pending_entry = {
                 'type': entry_signal['type'],
                 'fib_level': entry_signal['fib_level'],
                 'fib_price': entry_signal['fib_price'],
-                'setup_type': entry_signal['setup']['type']
+                'setup_type': entry_signal['setup']['type'],
+                'adx_passed': adx_passed
             }
-            logger.debug(f"Signal detected at bar {idx}, will enter on next bar")
+            logger.debug(f"Signal detected at bar {idx}, will enter on next bar (ADX: {'PASS' if adx_passed else 'INFO'})")
     
     # Close any remaining positions at end
     if len(df) > 0:
@@ -369,7 +418,8 @@ def backtest(symbol, start, end, timeframe):
                 'exit_reason': 'backtest_end',
                 'fib_level': pos.get('fib_level', 0),
                 'setup_type': pos.get('setup_type', 'unknown'),
-                'trend_mode': pos.get('trend_mode', 'auto')
+                'trend_mode': pos.get('trend_mode', 'auto'),
+                'adx_passed': pos.get('adx_passed', False)
             })
     
     # Generate statistics
@@ -411,12 +461,17 @@ def backtest(symbol, start, end, timeframe):
         manual_trades = len(trades_df[trades_df.get('trend_mode', 'auto') == 'manual'])
         auto_trades = len(trades_df[trades_df.get('trend_mode', 'auto') == 'auto'])
         
+        # Count ADX passed vs info trades
+        adx_passed_trades = len(trades_df[trades_df.get('adx_passed', False) == True])
+        adx_info_trades = len(trades_df[trades_df.get('adx_passed', False) == False])
+    
     else:
         wins = losses = 0
         win_rate = avg_win = avg_loss = profit_factor = total_profit = max_dd = avg_rr = 0
         fib_618_trades = fib_705_trades = fib_786_trades = 0
         trailing_stops = take_profits = stop_losses = 0
         manual_trades = auto_trades = 0
+        adx_passed_trades = adx_info_trades = 0
     
     summary = {
         'starting_balance': CONFIG['capital'],
@@ -443,31 +498,49 @@ def backtest(symbol, start, end, timeframe):
         'trend_neutral_bars': trend_counts['neutral'],
         'trend_mode': 'manual' if CONFIG.get('use_manual_trend', False) else 'automatic',
         'manual_trend_trades': manual_trades,
-        'auto_trend_trades': auto_trades
+        'auto_trend_trades': auto_trades,
+        'adx_filter_enabled': CONFIG.get('use_adx_filter', False),
+        'adx_signals_filtered': adx_filtered_signals,
+        'adx_passed_trades': adx_passed_trades,
+        'adx_info_trades': adx_info_trades
     }
     
     # Print results
-    print('\n' + '='*60)
+    print('\n' + '='*70)
     print('ICT FIBONACCI BACKTEST RESULTS')
-    print('='*60)
+    print('='*70)
     
     # Print trend mode info first
     if CONFIG.get('use_manual_trend', False):
         print(f'Trend Mode: MANUAL ({CONFIG["manual_trend"].upper()})')
     else:
         print(f'Trend Mode: AUTOMATIC (Point-Based System)')
-    print('='*60)
     
-    for key, value in summary.items():
-        if key in ['trend_mode', 'manual_trend_trades', 'auto_trend_trades']:
-            continue  # Skip these, already displayed
-        if isinstance(value, float):
-            if 'pct' in key or 'rate' in key:
-                print(f'{key.replace("_", " ").title()}: {value:.2f}%')
-            else:
-                print(f'{key.replace("_", " ").title()}: {value:.2f}')
-        else:
-            print(f'{key.replace("_", " ").title()}: {value}')
-    print('='*60)
+    # Print ADX filter info
+    if CONFIG.get('use_adx_filter', False):
+        print(f'ADX Filter: ENABLED (Threshold: {CONFIG["adx_strength_threshold"]})')
+        print(f'Signals Filtered by ADX: {adx_filtered_signals}')
+    else:
+        print(f'ADX Filter: DISABLED')
+    
+    print('='*70)
+    print(f'Starting Balance: ${CONFIG["capital"]:.2f}')
+    print(f'Ending Balance: ${balance:.2f}')
+    print(f'Total Profit: ${total_profit:.2f}')
+    print(f'Return: {(balance - CONFIG["capital"]) / CONFIG["capital"] * 100:.2f}%')
+    print('='*70)
+    print(f'Total Trades: {total_trades}')
+    print(f'Wins: {wins} | Losses: {losses} | Win Rate: {win_rate:.2f}%')
+    print(f'Avg Win: ${avg_win:.2f} | Avg Loss: ${avg_loss:.2f}')
+    print(f'Profit Factor: {profit_factor:.2f}')
+    print(f'Avg Risk/Reward: {avg_rr:.2f}')
+    print(f'Max Drawdown: {max_dd:.2f}%')
+    
+    if CONFIG.get('use_adx_filter', False):
+        print('='*70)
+        print(f'ADX Passed Trades: {adx_passed_trades}')
+        print(f'ADX Info Trades: {adx_info_trades}')
+    
+    print('='*70)
     
     return trades_df, summary

@@ -1,7 +1,6 @@
 """
-Trend Analysis Module - POINT-BASED SYSTEM with Manual Override
-Multi-timeframe trend determination using weighted point scoring
-More transparent, configurable, and reliable than voting system
+Trend Analysis Module - POINT-BASED SYSTEM with ADX Confirmation
+Multi-timeframe trend determination with ADX strength validation
 """
 
 import pandas as pd
@@ -28,6 +27,135 @@ def get_manual_trend():
     logger.info(f"{'='*70}\n")
     
     return trend
+
+# --------------------------- ADX ANALYSIS ----------------------------
+
+def check_adx_confirmation(df, trend):
+    """
+    Check if ADX confirms the trend strength
+    
+    Args:
+        df: DataFrame with ADX, +DI, -DI columns
+        trend: 'bullish', 'bearish', or 'neutral'
+    
+    Returns:
+        dict: {
+            'confirmed': bool,
+            'adx_value': float,
+            'strength': str,  # 'strong', 'moderate', 'weak', 'absent'
+            '+DI': float,
+            '-DI': float,
+            'di_aligned': bool,  # True if DI lines align with trend
+            'reason': str
+        }
+    """
+    if df.empty or len(df) == 0:
+        return {
+            'confirmed': False,
+            'adx_value': np.nan,
+            'strength': 'absent',
+            '+DI': np.nan,
+            '-DI': np.nan,
+            'di_aligned': False,
+            'reason': 'No data available'
+        }
+    
+    import numpy as np
+    
+    last = df.iloc[-1]
+    adx_value = last.get('adx', np.nan)
+    plus_di = last.get('+DI', np.nan)
+    minus_di = last.get('-DI', np.nan)
+    
+    # Check if values are valid
+    if pd.isna(adx_value) or pd.isna(plus_di) or pd.isna(minus_di):
+        return {
+            'confirmed': False,
+            'adx_value': adx_value,
+            'strength': 'absent',
+            '+DI': plus_di,
+            '-DI': minus_di,
+            'di_aligned': False,
+            'reason': 'ADX not yet calculated'
+        }
+    
+    threshold = CONFIG.get('adx_strength_threshold', 25)
+    extreme = CONFIG.get('adx_extreme_threshold', 40)
+    weak = CONFIG.get('adx_weak_threshold', 20)
+    
+    # Determine ADX strength
+    if adx_value >= extreme:
+        strength = 'strong'
+    elif adx_value >= threshold:
+        strength = 'moderate'
+    elif adx_value >= weak:
+        strength = 'weak'
+    else:
+        strength = 'absent'
+    
+    # Check if +DI and -DI align with trend
+    di_aligned = False
+    if CONFIG.get('adx_di_crossover_check', True):
+        if trend == 'bullish':
+            di_aligned = plus_di > minus_di
+        elif trend == 'bearish':
+            di_aligned = minus_di > plus_di
+        else:
+            di_aligned = True  # Neutral doesn't require DI alignment
+    else:
+        di_aligned = True  # If not checking DI, consider it aligned
+    
+    # Determine if trend is confirmed
+    confirmed = (adx_value >= threshold) and di_aligned
+    
+    # Build reason string
+    if not di_aligned:
+        reason = f"DI lines misaligned (+DI: {plus_di:.2f}, -DI: {minus_di:.2f})"
+    elif adx_value < threshold:
+        reason = f"ADX too weak ({adx_value:.2f} < {threshold})"
+    else:
+        reason = f"ADX confirms {trend.upper()} trend ({adx_value:.2f} {strength})"
+    
+    return {
+        'confirmed': confirmed,
+        'adx_value': adx_value,
+        'strength': strength,
+        '+DI': plus_di,
+        '-DI': minus_di,
+        'di_aligned': di_aligned,
+        'reason': reason
+    }
+
+def check_adx_across_timeframes(df_d1, df_h4, df_h1, trend):
+    """
+    Check ADX confirmation across multiple timeframes
+    
+    Returns:
+        dict with ADX status for each timeframe
+    """
+    timeframes = [
+        ('D1', df_d1),
+        ('H4', df_h4),
+        ('H1', df_h1)
+    ]
+    
+    adx_data = {}
+    all_confirmed = True
+    
+    for tf_name, df in timeframes:
+        adx_check = check_adx_confirmation(df, trend)
+        adx_data[tf_name] = adx_check
+        
+        # For strong trend confirmation, at least D1 should confirm
+        if tf_name == 'D1' and not adx_check['confirmed']:
+            all_confirmed = False
+    
+    return {
+        'timeframes': adx_data,
+        'all_confirmed': all_confirmed,
+        'highest_adx': max(adx_data[tf]['adx_value'] for tf in ['D1', 'H4', 'H1']),
+        'lowest_adx': min(adx_data[tf]['adx_value'] for tf in ['D1', 'H4', 'H1'])
+    }
 
 # --------------------------- POINT-BASED TREND ANALYSIS ----------------------------
 
@@ -69,11 +197,11 @@ def calculate_indicator_points(df, timeframe_weight):
         ma_diff = last['ma_fast'] - last['ma_slow']
         ma_diff_pct = (ma_diff / last['ma_slow']) * 100
         
-        if abs(ma_diff_pct) > 0.3:  # Strong trend
+        if abs(ma_diff_pct) > 0.3:
             ma_points = 3 if ma_diff > 0 else -3
-        elif abs(ma_diff_pct) > 0.15:  # Moderate trend
+        elif abs(ma_diff_pct) > 0.15:
             ma_points = 2 if ma_diff > 0 else -2
-        elif abs(ma_diff_pct) > 0.05:  # Weak trend
+        elif abs(ma_diff_pct) > 0.05:
             ma_points = 1 if ma_diff > 0 else -1
         else:
             ma_points = 0
@@ -91,19 +219,19 @@ def calculate_indicator_points(df, timeframe_weight):
     if CONFIG['use_rsi_for_trend'] and not pd.isna(last['rsi']):
         rsi_val = last['rsi']
         
-        if rsi_val > 70:  # Strongly overbought (bullish momentum)
+        if rsi_val > 70:
             rsi_points = 3
-        elif rsi_val > 60:  # Overbought (bullish)
+        elif rsi_val > 60:
             rsi_points = 2
-        elif rsi_val > 55:  # Slightly bullish
+        elif rsi_val > 55:
             rsi_points = 1
-        elif rsi_val < 30:  # Strongly oversold (bearish momentum)
+        elif rsi_val < 30:
             rsi_points = -3
-        elif rsi_val < 40:  # Oversold (bearish)
+        elif rsi_val < 40:
             rsi_points = -2
-        elif rsi_val < 45:  # Slightly bearish
+        elif rsi_val < 45:
             rsi_points = -1
-        else:  # Neutral zone (45-55)
+        else:
             rsi_points = 0
         
         points['rsi_points'] = rsi_points * timeframe_weight
@@ -118,9 +246,9 @@ def calculate_indicator_points(df, timeframe_weight):
         price_diff = last['close'] - last['vwap']
         price_diff_pct = (price_diff / last['vwap']) * 100
         
-        if abs(price_diff_pct) > 0.2:  # Strong deviation
+        if abs(price_diff_pct) > 0.2:
             vwap_points = 2 if price_diff > 0 else -2
-        elif abs(price_diff_pct) > 0.05:  # Moderate deviation
+        elif abs(price_diff_pct) > 0.05:
             vwap_points = 1 if price_diff > 0 else -1
         else:
             vwap_points = 0
@@ -141,16 +269,15 @@ def calculate_indicator_points(df, timeframe_weight):
         bb_range = last['bb_upper'] - last['bb_lower']
         position_in_bb = (last['close'] - last['bb_lower']) / bb_range if bb_range > 0 else 0.5
         
-        # Position: 0 = lower band, 0.5 = middle, 1 = upper band
-        if position_in_bb > 0.8:  # Near upper band
+        if position_in_bb > 0.8:
             bb_points = 2
-        elif position_in_bb > 0.6:  # Above middle
+        elif position_in_bb > 0.6:
             bb_points = 1
-        elif position_in_bb < 0.2:  # Near lower band
+        elif position_in_bb < 0.2:
             bb_points = -2
-        elif position_in_bb < 0.4:  # Below middle
+        elif position_in_bb < 0.4:
             bb_points = -1
-        else:  # Around middle
+        else:
             bb_points = 0
         
         points['bb_points'] = bb_points * timeframe_weight
@@ -164,7 +291,6 @@ def calculate_indicator_points(df, timeframe_weight):
             'weighted_points': points['bb_points']
         }
     
-    # Calculate total
     points['total_points'] = (
         points['ma_points'] + 
         points['rsi_points'] + 
@@ -179,20 +305,7 @@ def determine_trend(df_d1, df_h4, df_h1):
     Determine overall trend using point-based scoring system or manual override
     
     If use_manual_trend is True, returns the manual_trend value from CONFIG
-    Otherwise uses automatic point-based system:
-    
-    Timeframe Weights:
-    - D1: 3x (most important - overall trend)
-    - H4: 2x (intermediate trend)
-    - H1: 1x (short-term trend)
-    
-    Max Points Per Indicator Per Timeframe:
-    - MA: ±3 points
-    - RSI: ±3 points
-    - VWAP: ±2 points
-    - BB: ±2 points
-    
-    Total Max Points: (3+3+2+2) * (3+2+1) = 10 * 6 = 60 points
+    Otherwise uses automatic point-based system with optional ADX confirmation
     
     Returns: 'bullish', 'bearish', or 'neutral'
     """
@@ -217,7 +330,6 @@ def determine_trend(df_d1, df_h4, df_h1):
         total_points += tf_points['total_points']
     
     # Determine trend based on total points
-    # Thresholds are configurable
     bullish_threshold = CONFIG.get('trend_bullish_threshold', 8)
     bearish_threshold = CONFIG.get('trend_bearish_threshold', -8)
     
@@ -228,7 +340,6 @@ def determine_trend(df_d1, df_h4, df_h1):
     else:
         trend = 'neutral'
     
-    # Log detailed breakdown
     logger.debug(f"\n{'='*70}")
     logger.debug(f"TREND ANALYSIS - POINT-BASED SYSTEM")
     logger.debug(f"{'='*70}")
@@ -315,7 +426,7 @@ def get_trend_details(df_d1, df_h4, df_h1):
 
 def get_trend_confidence(df_d1, df_h4, df_h1):
     """
-    Calculate trend confidence percentage
+    Calculate trend confidence percentage (0-100)
     
     Returns: float (0-100)
     """
@@ -338,7 +449,7 @@ def get_trend_confidence(df_d1, df_h4, df_h1):
     
     # Max points per timeframe
     max_points_per_tf = {
-        'D1': 10 * 3,  # (3+3+2+2) * weight
+        'D1': 10 * 3,
         'H4': 10 * 2,
         'H1': 10 * 1
     }

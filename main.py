@@ -1,24 +1,21 @@
 """
-ICT Fibonacci Trading Bot - Main Entry Point with Macro Analysis Integration
+ICT Fibonacci Trading Bot - Main Entry Point with ADX & Macro Analysis Integration
 
 Usage:
     # Run backtest
     python main.py --backtest
     
-    # Run live trading with macro analysis
-    python main.py --live
+    # Run live trading with ADX filter enabled
+    python main.py --live --adx
     
-    # Run with custom symbol
-    python main.py --live --symbol EURUSD
+    # Run with custom ADX threshold
+    python main.py --live --adx --adx-threshold 30
     
-    # Run with manual trend override
-    python main.py --live --manual-trend bullish
+    # Run with ADX disabled
+    python main.py --live --no-adx
     
-    # Run without macro filter (info only)
-    python main.py --live --no-macro-filter
-    
-    # Run with only fundamental analysis
-    python main.py --live --fundamental-only
+    # Run with ADX and macro analysis
+    python main.py --live --adx --fundamental-only
 """
 
 import argparse
@@ -30,15 +27,27 @@ from live_trading import start_live_trading
 def parse_arguments():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(
-        description='ICT Fibonacci Trading Bot with Macro Analysis',
+        description='ICT Fibonacci Trading Bot with ADX & Macro Analysis',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   # Run backtest with default settings
   python main.py --backtest
   
-  # Run live trading with full macro analysis
-  python main.py --live
+  # Run live trading with ADX filter enabled
+  python main.py --live --adx
+  
+  # Run live trading with custom ADX threshold
+  python main.py --live --adx --adx-threshold 30
+  
+  # Run live trading without ADX filter
+  python main.py --live --no-adx
+  
+  # Run with custom ADX period
+  python main.py --live --adx --adx-period 21
+  
+  # Run with ADX and DI crossover check disabled
+  python main.py --live --adx --no-di-check
   
   # Run with custom symbol
   python main.py --live --symbol EURUSD
@@ -46,17 +55,8 @@ Examples:
   # Run with manual trend override
   python main.py --live --manual-trend bullish
   
-  # Run without macro filter (display info only)
-  python main.py --live --no-macro-filter
-  
-  # Run with only fundamental analysis (no sentiment)
-  python main.py --live --fundamental-only
-  
-  # Run with only sentiment analysis (no fundamental)
-  python main.py --live --sentiment-only
-  
-  # Run without any macro analysis
-  python main.py --live --no-macro-analysis
+  # Run with ADX and macro analysis
+  python main.py --live --adx --fundamental-only
   
   # Run backtest with custom dates
   python main.py --backtest --start 2024-01-01 --end 2024-12-31
@@ -118,6 +118,57 @@ Examples:
         help='Enable trailing stops'
     )
     
+    # ADX Filter Options
+    adx_group = parser.add_argument_group('ADX Filter Options')
+    
+    adx_group.add_argument(
+        '--adx',
+        action='store_true',
+        help='Enable ADX filter for trend confirmation'
+    )
+    
+    adx_group.add_argument(
+        '--no-adx',
+        action='store_true',
+        help='Disable ADX filter'
+    )
+    
+    adx_group.add_argument(
+        '--adx-period',
+        type=int,
+        help=f'ADX calculation period (default: {CONFIG["adx_period"]})'
+    )
+    
+    adx_group.add_argument(
+        '--adx-threshold',
+        type=float,
+        help=f'ADX strength threshold (default: {CONFIG["adx_strength_threshold"]})'
+    )
+    
+    adx_group.add_argument(
+        '--adx-extreme',
+        type=float,
+        help=f'ADX extreme threshold (default: {CONFIG["adx_extreme_threshold"]})'
+    )
+    
+    adx_group.add_argument(
+        '--adx-weak',
+        type=float,
+        help=f'ADX weak threshold (default: {CONFIG["adx_weak_threshold"]})'
+    )
+    
+    adx_group.add_argument(
+        '--no-di-check',
+        action='store_true',
+        help='Disable +DI/-DI crossover check'
+    )
+    
+    adx_group.add_argument(
+        '--verbose-adx',
+        action='store_true',
+        help='Enable verbose ADX logging'
+    )
+    
     # Trend Analysis
     parser.add_argument(
         '--manual-trend',
@@ -177,18 +228,6 @@ Examples:
         help='Enable verbose macro analysis logging'
     )
     
-    macro_group.add_argument(
-        '--newsapi-key',
-        type=str,
-        help='Set NewsAPI key for news sentiment'
-    )
-    
-    macro_group.add_argument(
-        '--alpha-vantage-key',
-        type=str,
-        help='Set Alpha Vantage key for economic data'
-    )
-    
     return parser.parse_args()
 
 def update_config_from_args(args):
@@ -218,6 +257,39 @@ def update_config_from_args(args):
     
     if args.trailing:
         CONFIG['trailing_stop'] = True
+    
+    # ADX Filter Options
+    if args.adx:
+        CONFIG['use_adx_filter'] = True
+        logger.info("✓ ADX filter ENABLED")
+    
+    if args.no_adx:
+        CONFIG['use_adx_filter'] = False
+        logger.info("🔇 ADX filter DISABLED")
+    
+    if args.adx_period:
+        CONFIG['adx_period'] = args.adx_period
+        logger.info(f"✓ ADX period set to {args.adx_period}")
+    
+    if args.adx_threshold:
+        CONFIG['adx_strength_threshold'] = args.adx_threshold
+        logger.info(f"✓ ADX strength threshold set to {args.adx_threshold}")
+    
+    if args.adx_extreme:
+        CONFIG['adx_extreme_threshold'] = args.adx_extreme
+        logger.info(f"✓ ADX extreme threshold set to {args.adx_extreme}")
+    
+    if args.adx_weak:
+        CONFIG['adx_weak_threshold'] = args.adx_weak
+        logger.info(f"✓ ADX weak threshold set to {args.adx_weak}")
+    
+    if args.no_di_check:
+        CONFIG['adx_di_crossover_check'] = False
+        logger.info("🔇 +DI/-DI crossover check DISABLED")
+    
+    if args.verbose_adx:
+        CONFIG['verbose_adx_analysis'] = True
+        logger.info("🔊 Verbose ADX logging ENABLED")
     
     # Trend Analysis
     if args.manual_trend:
@@ -265,20 +337,12 @@ def update_config_from_args(args):
     if args.verbose_macro:
         CONFIG['verbose_macro_analysis'] = True
         logger.info("🔊 Verbose macro logging: ENABLED")
-    
-    if args.newsapi_key:
-        CONFIG['newsapi_key'] = args.newsapi_key
-        logger.info("✓ NewsAPI key set")
-    
-    if args.alpha_vantage_key:
-        CONFIG['alpha_vantage_key'] = args.alpha_vantage_key
-        logger.info("✓ Alpha Vantage key set")
 
 def main():
     """Main function"""
     print("\n" + "="*70)
     print("ICT FIBONACCI TRADING BOT")
-    print("Enhanced with Macro & Fundamental Analysis")
+    print("Enhanced with ADX Trend Confirmation & Macro Analysis")
     print("="*70 + "\n")
     
     # Parse arguments
@@ -309,6 +373,17 @@ def main():
         print(f"🎯 Trend Mode: MANUAL ({CONFIG['manual_trend'].upper()})")
     else:
         print(f"📊 Trend Mode: AUTOMATIC (Point-Based System)")
+    
+    # Display ADX configuration
+    if CONFIG.get('use_adx_filter', False):
+        print(f"\n✓ ADX FILTER: ENABLED")
+        print(f"   Period: {CONFIG['adx_period']}")
+        print(f"   Strength Threshold: {CONFIG['adx_strength_threshold']}")
+        print(f"   Extreme Threshold: {CONFIG['adx_extreme_threshold']}")
+        print(f"   Weak Threshold: {CONFIG['adx_weak_threshold']}")
+        print(f"   DI Crossover Check: {'YES' if CONFIG['adx_di_crossover_check'] else 'NO'}")
+    else:
+        print(f"\n🔇 ADX FILTER: DISABLED")
     
     if CONFIG['use_fundamental_analysis'] or CONFIG['use_sentiment_analysis']:
         print("\n🌍 MACRO ANALYSIS MODULES:")
