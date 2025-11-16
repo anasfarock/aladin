@@ -82,13 +82,17 @@ def compute_atr(df, period=14):
     
     # Calculate True Range
     high_low = df['high'] - df['low']
-    high_close = np.abs(df['high'] - df['close'].shift())
-    low_close = np.abs(df['low'] - df['close'].shift())
+    high_close = np.abs(df['high'] - df['close'].shift(1))
+    low_close = np.abs(df['low'] - df['close'].shift(1))
     
     tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
     
+    # Fill first NaN value with high-low for first row
+    tr.iloc[0] = tr.iloc[1] if len(tr) > 1 else df['high'].iloc[0] - df['low'].iloc[0]
+    
     # Calculate ATR using EMA
     atr = tr.ewm(span=period, adjust=False).mean()
+    
     return atr
 
 def compute_adx(df, period=14):

@@ -1,6 +1,6 @@
 """
-Live Trading Engine - Enhanced with ADX Trend Confirmation
-Shows ADX strength validation before executing trades
+Live Trading Engine - Enhanced with ADX, ATR Stops, and Macro Analysis
+Shows ADX strength validation and ATR stop comparison before executing trades
 """
 
 import time
@@ -20,7 +20,8 @@ from risk_management import (
     calculate_position_size,
     validate_trade_setup,
     check_max_positions_reached,
-    check_max_positions_reached_for_symbol
+    check_max_positions_reached_for_symbol,
+    compare_stop_loss_methods
 )
 
 # Import fundamental & sentiment analysis
@@ -198,7 +199,7 @@ def _check_adx_filter(df_d1, df_h4, df_h1, trend):
 
 def live_run_once(symbol):
     """
-    Execute one live trading cycle with ADX and macro analysis integration
+    Execute one live trading cycle with ADX, ATR stops, and macro analysis
     """
     # Monitor existing positions first
     monitor_live_positions(symbol)
@@ -223,7 +224,7 @@ def live_run_once(symbol):
         df_h4 = fetch_live_data(symbol, 'H4', 500)
         df_h1 = fetch_live_data(symbol, 'H1', 500)
         
-        # Compute indicators (including ADX)
+        # Compute indicators (including ADX and ATR)
         df_entry = compute_indicators(df_entry)
         df_d1 = compute_indicators(df_d1)
         df_h4 = compute_indicators(df_h4)
@@ -366,10 +367,40 @@ def live_run_once(symbol):
             except Exception as e:
                 logger.warning(f"Could not export chart: {e}")
         
-        # Calculate stops and targets
+        # ===== CALCULATE STOPS AND TARGETS WITH ATR =====
+        entry_approx = df_entry.iloc[-1]['close']
+        
         if signal_type == 'long':
-            stop_price = fib_price - (CONFIG['fib_tolerance'] * 3)
-            entry_approx = df_entry.iloc[-1]['close']
+            # Original Fibonacci stop
+            fib_stop = fib_price - (CONFIG['fib_tolerance'] * 3)
+            
+            # ===== ATR-BASED STOP LOSS =====
+            if CONFIG.get('use_atr_stops', False):
+                stop_comparison = compare_stop_loss_methods(
+                    df_entry, 
+                    entry_approx, 
+                    'long', 
+                    fib_stop
+                )
+                
+                stop_price = stop_comparison['stop_price']
+                stop_method = stop_comparison['selected_method']
+                
+                if CONFIG.get('verbose_atr_analysis', True):
+                    logger.info("")
+                    logger.info("="*70)
+                    logger.info("💰 STOP LOSS ANALYSIS")
+                    logger.info("="*70)
+                    logger.info(f"ATR Value: {stop_comparison.get('atr_value', 0):.5f}")
+                    logger.info(f"ATR Stop ({CONFIG['atr_stop_multiplier']}x): {stop_comparison['atr_stop']:.5f}")
+                    logger.info(f"Fibonacci Stop: {stop_comparison['fib_stop']:.5f}")
+                    logger.info(f"Selected: {stop_method} Stop @ {stop_price:.5f}")
+                    logger.info(f"Reason: {stop_comparison['reason']}")
+                    logger.info("="*70)
+            else:
+                stop_price = fib_stop
+                stop_method = 'Fibonacci'
+            
             risk_per_unit = entry_approx - stop_price
             
             if risk_per_unit <= 0:
@@ -380,9 +411,37 @@ def live_run_once(symbol):
             tp_price = entry_approx + tp_distance
             side = 'buy'
         
-        else:
-            stop_price = fib_price + (CONFIG['fib_tolerance'] * 3)
-            entry_approx = df_entry.iloc[-1]['close']
+        else:  # SHORT
+            # Original Fibonacci stop
+            fib_stop = fib_price + (CONFIG['fib_tolerance'] * 3)
+            
+            # ===== ATR-BASED STOP LOSS =====
+            if CONFIG.get('use_atr_stops', False):
+                stop_comparison = compare_stop_loss_methods(
+                    df_entry, 
+                    entry_approx, 
+                    'short', 
+                    fib_stop
+                )
+                
+                stop_price = stop_comparison['stop_price']
+                stop_method = stop_comparison['selected_method']
+                
+                if CONFIG.get('verbose_atr_analysis', True):
+                    logger.info("")
+                    logger.info("="*70)
+                    logger.info("💰 STOP LOSS ANALYSIS")
+                    logger.info("="*70)
+                    logger.info(f"ATR Value: {stop_comparison.get('atr_value', 0):.5f}")
+                    logger.info(f"ATR Stop ({CONFIG['atr_stop_multiplier']}x): {stop_comparison['atr_stop']:.5f}")
+                    logger.info(f"Fibonacci Stop: {stop_comparison['fib_stop']:.5f}")
+                    logger.info(f"Selected: {stop_method} Stop @ {stop_price:.5f}")
+                    logger.info(f"Reason: {stop_comparison['reason']}")
+                    logger.info("="*70)
+            else:
+                stop_price = fib_stop
+                stop_method = 'Fibonacci'
+            
             risk_per_unit = stop_price - entry_approx
             
             if risk_per_unit <= 0:
@@ -408,6 +467,7 @@ def live_run_once(symbol):
         
         logger.info(f"\n💼 TRADE DETAILS:")
         logger.info(f"  Side: {side.upper()}")
+        logger.info(f"  Stop Loss Method: {stop_method}")
         logger.info(f"  Volume: {volume} lots")
         logger.info(f"  Entry (approx): {entry_approx:.5f}")
         logger.info(f"  Stop Loss: {stop_price:.5f} ({stop_distance_pips:.1f} pips)")
@@ -428,6 +488,7 @@ def live_run_once(symbol):
             logger.info(f"  Actual Entry: {result.price:.5f}")
             logger.info(f"  Volume: {result.volume} lots")
             logger.info(f"  Slippage: {abs(result.price - entry_approx) * 10000:.1f} pips")
+            logger.info(f"  Stop Method: {stop_method}")
             logger.info("="*70 + "\n")
             return result
         else:
@@ -443,7 +504,7 @@ def live_run_once(symbol):
 
 def start_live_trading(symbol=None):
     """
-    Start the live trading bot with ADX and macro analysis
+    Start the live trading bot with ADX, ATR stops, and macro analysis
     """
     if not MT5_AVAILABLE:
         logger.error("MetaTrader5 not available. Cannot start live trading.")
@@ -474,6 +535,14 @@ def start_live_trading(symbol=None):
         logger.info(f"   DI Crossover Check: {'YES' if CONFIG['adx_di_crossover_check'] else 'NO'}")
     else:
         logger.info(f"\n🔇 ADX FILTER: DISABLED")
+    
+    # Display ATR stops status
+    if CONFIG.get('use_atr_stops', False):
+        logger.info(f"\n💰 ATR STOPS: ENABLED")
+        logger.info(f"   Multiplier: {CONFIG['atr_stop_multiplier']}x")
+        logger.info(f"   Method: {CONFIG['atr_stop_method'].upper()}")
+    else:
+        logger.info(f"\n💰 ATR STOPS: DISABLED (using Fibonacci stops)")
     
     # Display macro analysis status
     if CONFIG['use_fundamental_analysis'] or CONFIG['use_sentiment_analysis']:

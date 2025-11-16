@@ -1,7 +1,7 @@
 """
-Backtesting Module - With ADX Trend Confirmation
-Historical simulation with ADX validation and corrected dataframe slicing
-Updated to support Manual Trend Override and ADX Filter
+Backtesting Module - With ADX Trend Confirmation and ATR Stop Loss
+Historical simulation with ADX validation, ATR stops, and corrected dataframe slicing
+Updated to support Manual Trend Override, ADX Filter, and ATR Stop Loss Strategy
 """
 
 from datetime import datetime, timedelta
@@ -12,7 +12,7 @@ from config import CONFIG, MT5_TIMEFRAMES, logger
 from indicators import compute_indicators
 from fibonacci import identify_swing_points, find_fibonacci_setups, check_fibonacci_entry
 from trend_analysis import determine_trend, check_adx_across_timeframes
-from risk_management import update_trailing_stop
+from risk_management import update_trailing_stop, compare_stop_loss_methods
 from mt5_handler import fetch_mt5_df
 
 def calculate_max_drawdown(equity_curve):
@@ -54,14 +54,15 @@ def check_adx_filter_backtest(df_d1, df_h4, df_h1, trend):
 
 def backtest(symbol, start, end, timeframe):
     """
-    Run ICT Fibonacci backtest with ADX confirmation and corrected logic
+    Run ICT Fibonacci backtest with ADX confirmation, ATR stops, and corrected logic
     
     FEATURES:
     - ADX trend confirmation (configurable threshold)
+    - ATR-based stop loss with Fibonacci comparison
     - Proper index synchronization for Fibonacci setups
     - Entry on next bar open (no lookahead bias)
     - Manual trend override support
-    - Trailing stops with ADX validation
+    - Trailing stops
     
     Args:
         symbol: Trading symbol
@@ -91,6 +92,12 @@ def backtest(symbol, start, end, timeframe):
     else:
         logger.info("ADX Filter: DISABLED")
     
+    # Display ATR stops status
+    if CONFIG.get('use_atr_stops', False):
+        logger.info(f"ATR Stops: ENABLED (Multiplier: {CONFIG['atr_stop_multiplier']}x, Method: {CONFIG['atr_stop_method']})")
+    else:
+        logger.info("ATR Stops: DISABLED (using Fibonacci stops)")
+    
     tf = MT5_TIMEFRAMES.get(timeframe)
     if tf is None:
         raise ValueError(f'Unsupported timeframe: {timeframe}')
@@ -110,8 +117,8 @@ def backtest(symbol, start, end, timeframe):
         logger.error(f"Data fetch failed: {e}")
         raise
     
-    # Compute indicators (including ADX)
-    logger.info("Computing technical indicators (including ADX)...")
+    # Compute indicators (including ADX and ATR)
+    logger.info("Computing technical indicators (including ADX and ATR)...")
     df = compute_indicators(df)
     df_d1 = compute_indicators(df_d1)
     df_h4 = compute_indicators(df_h4)
@@ -163,7 +170,30 @@ def backtest(symbol, start, end, timeframe):
             
             # Calculate stops and targets
             if signal_type == 'long':
-                stop_price = fib_price - (CONFIG['fib_tolerance'] * 3)
+                # Original Fibonacci stop
+                fib_stop = fib_price - (CONFIG['fib_tolerance'] * 3)
+                
+                # ===== ATR-BASED STOP LOSS =====
+                if CONFIG.get('use_atr_stops', False):
+                    stop_comparison = compare_stop_loss_methods(
+                        df.iloc[max(0, idx-200):idx+1].reset_index(drop=True),
+                        entry_price,
+                        'long',
+                        fib_stop
+                    )
+                    
+                    stop_price = stop_comparison['stop_price']
+                    stop_method = stop_comparison['selected_method']
+                    atr_stop_val = stop_comparison.get('atr_stop')
+                    if atr_stop_val is not None:
+                        logger.debug(f"LONG Stop Loss: {stop_method} @ {stop_price:.5f} "
+                                   f"(Fib: {fib_stop:.5f}, ATR: {atr_stop_val:.5f})")
+                    else:
+                        logger.debug(f"LONG Stop Loss: {stop_method} @ {stop_price:.5f} (Fib: {fib_stop:.5f})")
+                else:
+                    stop_price = fib_stop
+                    stop_method = 'Fibonacci'
+                
                 risk_per_unit = entry_price - stop_price
                 
                 if risk_per_unit > 0:
@@ -188,15 +218,39 @@ def backtest(symbol, start, end, timeframe):
                         'fib_level': fib_level,
                         'setup_type': setup_type,
                         'trend_mode': trend_mode,
-                        'adx_passed': adx_passed
+                        'adx_passed': adx_passed,
+                        'stop_method': stop_method
                     }
                     
                     open_positions.append(position)
-                    logger.debug(f"Entered LONG at {entry_price:.5f}, SL: {stop_price:.5f}, TP: {tp_price:.5f}, "
-                               f"Fib: {fib_level}, Trend: {trend_mode}, ADX: {'PASS' if adx_passed else 'INFO'}")
+                    logger.debug(f"Entered LONG at {entry_price:.5f}, SL: {stop_price:.5f} ({stop_method}), "
+                               f"TP: {tp_price:.5f}, Fib: {fib_level}, Trend: {trend_mode}")
             
-            else:  # short
-                stop_price = fib_price + (CONFIG['fib_tolerance'] * 3)
+            else:  # SHORT
+                # Original Fibonacci stop
+                fib_stop = fib_price + (CONFIG['fib_tolerance'] * 3)
+                
+                # ===== ATR-BASED STOP LOSS =====
+                if CONFIG.get('use_atr_stops', False):
+                    stop_comparison = compare_stop_loss_methods(
+                        df.iloc[max(0, idx-200):idx+1].reset_index(drop=True),
+                        entry_price,
+                        'short',
+                        fib_stop
+                    )
+                    
+                    stop_price = stop_comparison['stop_price']
+                    stop_method = stop_comparison['selected_method']
+                    atr_stop_val = stop_comparison.get('atr_stop')
+                    if atr_stop_val is not None:
+                        logger.debug(f"SHORT Stop Loss: {stop_method} @ {stop_price:.5f} "
+                                   f"(Fib: {fib_stop:.5f}, ATR: {atr_stop_val:.5f})")
+                    else:
+                        logger.debug(f"SHORT Stop Loss: {stop_method} @ {stop_price:.5f} (Fib: {fib_stop:.5f})")
+                else:
+                    stop_price = fib_stop
+                    stop_method = 'Fibonacci'
+                
                 risk_per_unit = stop_price - entry_price
                 
                 if risk_per_unit > 0:
@@ -219,12 +273,13 @@ def backtest(symbol, start, end, timeframe):
                         'fib_level': fib_level,
                         'setup_type': setup_type,
                         'trend_mode': trend_mode,
-                        'adx_passed': adx_passed
+                        'adx_passed': adx_passed,
+                        'stop_method': stop_method
                     }
                     
                     open_positions.append(position)
-                    logger.debug(f"Entered SHORT at {entry_price:.5f}, SL: {stop_price:.5f}, TP: {tp_price:.5f}, "
-                               f"Fib: {fib_level}, Trend: {trend_mode}, ADX: {'PASS' if adx_passed else 'INFO'}")
+                    logger.debug(f"Entered SHORT at {entry_price:.5f}, SL: {stop_price:.5f} ({stop_method}), "
+                               f"TP: {tp_price:.5f}, Fib: {fib_level}, Trend: {trend_mode}")
             
             pending_entry = None
         
@@ -255,7 +310,8 @@ def backtest(symbol, start, end, timeframe):
                         'fib_level': pos.get('fib_level', 0),
                         'setup_type': pos.get('setup_type', 'unknown'),
                         'trend_mode': pos.get('trend_mode', 'auto'),
-                        'adx_passed': pos.get('adx_passed', False)
+                        'adx_passed': pos.get('adx_passed', False),
+                        'stop_method': pos.get('stop_method', 'Fibonacci')
                     })
                     open_positions.remove(pos)
                     continue
@@ -276,7 +332,8 @@ def backtest(symbol, start, end, timeframe):
                         'fib_level': pos.get('fib_level', 0),
                         'setup_type': pos.get('setup_type', 'unknown'),
                         'trend_mode': pos.get('trend_mode', 'auto'),
-                        'adx_passed': pos.get('adx_passed', False)
+                        'adx_passed': pos.get('adx_passed', False),
+                        'stop_method': pos.get('stop_method', 'Fibonacci')
                     })
                     open_positions.remove(pos)
                     continue
@@ -300,7 +357,8 @@ def backtest(symbol, start, end, timeframe):
                         'fib_level': pos.get('fib_level', 0),
                         'setup_type': pos.get('setup_type', 'unknown'),
                         'trend_mode': pos.get('trend_mode', 'auto'),
-                        'adx_passed': pos.get('adx_passed', False)
+                        'adx_passed': pos.get('adx_passed', False),
+                        'stop_method': pos.get('stop_method', 'Fibonacci')
                     })
                     open_positions.remove(pos)
                     continue
@@ -320,7 +378,8 @@ def backtest(symbol, start, end, timeframe):
                         'fib_level': pos.get('fib_level', 0),
                         'setup_type': pos.get('setup_type', 'unknown'),
                         'trend_mode': pos.get('trend_mode', 'auto'),
-                        'adx_passed': pos.get('adx_passed', False)
+                        'adx_passed': pos.get('adx_passed', False),
+                        'stop_method': pos.get('stop_method', 'Fibonacci')
                     })
                     open_positions.remove(pos)
                     continue
@@ -419,7 +478,8 @@ def backtest(symbol, start, end, timeframe):
                 'fib_level': pos.get('fib_level', 0),
                 'setup_type': pos.get('setup_type', 'unknown'),
                 'trend_mode': pos.get('trend_mode', 'auto'),
-                'adx_passed': pos.get('adx_passed', False)
+                'adx_passed': pos.get('adx_passed', False),
+                'stop_method': pos.get('stop_method', 'Fibonacci')
             })
     
     # Generate statistics
@@ -464,6 +524,10 @@ def backtest(symbol, start, end, timeframe):
         # Count ADX passed vs info trades
         adx_passed_trades = len(trades_df[trades_df.get('adx_passed', False) == True])
         adx_info_trades = len(trades_df[trades_df.get('adx_passed', False) == False])
+        
+        # Count ATR vs Fibonacci stops
+        atr_stopped_trades = len(trades_df[trades_df.get('stop_method', 'Fibonacci') == 'ATR'])
+        fib_stopped_trades = len(trades_df[trades_df.get('stop_method', 'Fibonacci') == 'Fibonacci'])
     
     else:
         wins = losses = 0
@@ -472,6 +536,7 @@ def backtest(symbol, start, end, timeframe):
         trailing_stops = take_profits = stop_losses = 0
         manual_trades = auto_trades = 0
         adx_passed_trades = adx_info_trades = 0
+        atr_stopped_trades = fib_stopped_trades = 0
     
     summary = {
         'starting_balance': CONFIG['capital'],
@@ -502,7 +567,12 @@ def backtest(symbol, start, end, timeframe):
         'adx_filter_enabled': CONFIG.get('use_adx_filter', False),
         'adx_signals_filtered': adx_filtered_signals,
         'adx_passed_trades': adx_passed_trades,
-        'adx_info_trades': adx_info_trades
+        'adx_info_trades': adx_info_trades,
+        'atr_stops_enabled': CONFIG.get('use_atr_stops', False),
+        'atr_multiplier': CONFIG.get('atr_stop_multiplier', 2.0),
+        'atr_stop_method': CONFIG.get('atr_stop_method', 'wider'),
+        'atr_stopped_trades': atr_stopped_trades,
+        'fib_stopped_trades': fib_stopped_trades
     }
     
     # Print results
@@ -523,6 +593,12 @@ def backtest(symbol, start, end, timeframe):
     else:
         print(f'ADX Filter: DISABLED')
     
+    # Print ATR stops info
+    if CONFIG.get('use_atr_stops', False):
+        print(f'ATR Stops: ENABLED (Multiplier: {CONFIG["atr_stop_multiplier"]}x, Method: {CONFIG["atr_stop_method"].upper()})')
+    else:
+        print(f'ATR Stops: DISABLED')
+    
     print('='*70)
     print(f'Starting Balance: ${CONFIG["capital"]:.2f}')
     print(f'Ending Balance: ${balance:.2f}')
@@ -540,6 +616,11 @@ def backtest(symbol, start, end, timeframe):
         print('='*70)
         print(f'ADX Passed Trades: {adx_passed_trades}')
         print(f'ADX Info Trades: {adx_info_trades}')
+    
+    if CONFIG.get('use_atr_stops', False):
+        print('='*70)
+        print(f'Trades Using ATR Stops: {atr_stopped_trades}')
+        print(f'Trades Using Fibonacci Stops: {fib_stopped_trades}')
     
     print('='*70)
     

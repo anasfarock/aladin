@@ -32,7 +32,7 @@ CONFIG = {
     # Trading Parameters
     'symbol': 'USDCAD',
     'backtest': False,
-    'start': '2025-11-10',
+    'start': '2024-11-10',
     'end': '2025-11-16',
     'capital': 5000.0,
     'risk_pct': 0.5,
@@ -52,7 +52,7 @@ CONFIG = {
     # ===== ADX SETTINGS =====
     'adx_period': 30,                          # ADX calculation period
     'use_adx_filter': True,                    # Enable/disable ADX filter
-    'adx_strength_threshold': 25,              # Minimum ADX value to confirm strong trend
+    'adx_strength_threshold': 30,              # Minimum ADX value to confirm strong trend
     'adx_extreme_threshold': 80,               # ADX value indicating very strong trend
     'adx_weak_threshold': 20,                  # ADX value below which trend is weak
     'adx_di_crossover_check': True,            # Check if +DI > -DI for bullish, -DI > +DI for bearish
@@ -134,7 +134,7 @@ CONFIG = {
     
     # Risk Management
     'max_concurrent_trades': 8,                    # Max total concurrent trades across all pairs
-    'max_concurrent_trades_of_same_pair': 3,      # Max concurrent trades on a single pair
+    'max_concurrent_trades_of_same_pair': 4,       # Max concurrent trades on a single pair
     'min_bars_required': 50,
     'trailing_stop': False,
     'trailing_levels': {
@@ -144,7 +144,54 @@ CONFIG = {
         4.0: 3.0,
     },
     'min_rr_ratio': 1.5,
+
+# Copy and paste this into your CONFIG dictionary:
+
+    # ===== ATR-BASED STOP LOSS SETTINGS =====
+    'use_atr_stops': True,                         # Enable/disable ATR-based stop loss
+    'atr_stop_multiplier': 1.5,                    # Multiplier for ATR (e.g., 2.0 = 2x ATR)
+    'atr_stop_method': 'tighter',                  # 'wider', 'tighter', or 'fibonacci'
+                                                   # wider: Use whichever stop gives more room
+                                                   # tighter: Use whichever stop is closer
+                                                   # fibonacci: Always use Fibonacci stops
     
+    # ATR Stop Adjustment Options
+    'atr_stop_adjustment': 'none',                 # 'none', 'dynamic', or 'volatility'
+                                                   # none: Fixed multiplier
+                                                   # dynamic: Adjust based on volatility
+                                                   # volatility: Scale with market volatility
+    
+    'atr_dynamic_min_multiplier': 1.5,             # Minimum multiplier for dynamic mode
+    'atr_dynamic_max_multiplier': 3.0,             # Maximum multiplier for dynamic mode
+    'atr_volatility_threshold': 1.5,               # Used to adjust multiplier in volatility mode
+    
+    # Logging & Display
+    'verbose_atr_analysis': True,                  # Enable detailed ATR stop loss logging
+
+
+# USAGE EXAMPLES:
+"""
+1. ATR stops with 2x multiplier, wider than Fibonacci:
+   'use_atr_stops': True,
+   'atr_stop_multiplier': 2.0,
+   'atr_stop_method': 'wider',
+
+2. ATR stops with 1.5x multiplier, tighter stops:
+   'use_atr_stops': True,
+   'atr_stop_multiplier': 1.5,
+   'atr_stop_method': 'tighter',
+
+3. Always use Fibonacci stops (ATR disabled):
+   'use_atr_stops': False,
+   'atr_stop_method': 'fibonacci',
+
+4. Dynamic ATR multiplier based on volatility:
+   'use_atr_stops': True,
+   'atr_stop_adjustment': 'dynamic',
+   'atr_dynamic_min_multiplier': 1.5,
+   'atr_dynamic_max_multiplier': 3.0,
+"""
+
     # Order Execution Settings
     'slippage_points': 50,
     'max_retries': 3,

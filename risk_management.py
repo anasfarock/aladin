@@ -1,6 +1,6 @@
 """
-Risk Management Module
-Handles trailing stops, position monitoring, and risk calculations
+Risk Management Module - Enhanced with ATR-Based Stop Loss
+Handles trailing stops, position monitoring, risk calculations, and ATR stops
 """
 
 import logging
@@ -10,6 +10,212 @@ if MT5_AVAILABLE:
     from mt5_handler import update_position_sl_tp, get_open_positions
 
 logger = logging.getLogger(__name__)
+
+# --------------------------- ATR-BASED STOP LOSS ----------------------------
+
+def calculate_atr_stop_loss(df, entry_price, side, atr_multiplier=None):
+    """
+    Calculate stop loss based on ATR (Average True Range)
+    
+    Args:
+        df: DataFrame with OHLC and ATR data
+        entry_price: Entry price of the trade
+        side: 'long' or 'short'
+        atr_multiplier: Optional multiplier override (uses CONFIG if None)
+    
+    Returns:
+        dict: {
+            'stop_price': float,
+            'atr_value': float,
+            'distance_pips': float,
+            'method': str
+        }
+        or None if ATR cannot be calculated
+    """
+    if df.empty or len(df) == 0:
+        return None
+    
+    if not CONFIG.get('use_atr_stops', False):
+        return None
+    
+    try:
+        # Get ATR value from last bar
+        atr_value = df.iloc[-1].get('atr')
+        
+        # Check if ATR exists and is valid
+        if atr_value is None or pd.isna(atr_value) or atr_value <= 0:
+            logger.debug("ATR value not available or invalid")
+            return None
+        
+        # Use provided multiplier or CONFIG value
+        if atr_multiplier is None:
+            atr_multiplier = CONFIG.get('atr_stop_multiplier', 2.0)
+        
+        # Calculate stop distance based on ATR
+        atr_stop_distance = atr_value * atr_multiplier
+        
+        # Calculate stop price
+        if side == 'long':
+            stop_price = entry_price - atr_stop_distance
+        else:  # short
+            stop_price = entry_price + atr_stop_distance
+        
+        distance_pips = atr_stop_distance * 10000
+        
+        return {
+            'stop_price': stop_price,
+            'atr_value': atr_value,
+            'distance_pips': distance_pips,
+            'method': 'ATR'
+        }
+    
+    except Exception as e:
+        logger.debug(f"Error calculating ATR stop loss: {e}")
+        return None
+
+def compare_stop_loss_methods(df, entry_price, side, fib_stop_price):
+    """
+    Compare ATR-based stop loss with Fibonacci stop loss
+    Returns the one that provides better risk management
+    
+    Args:
+        df: DataFrame with OHLC and ATR data
+        entry_price: Entry price
+        side: 'long' or 'short'
+        fib_stop_price: Stop price from Fibonacci analysis
+    
+    Returns:
+        dict: {
+            'stop_price': float (selected),
+            'atr_stop': float or None,
+            'fib_stop': float,
+            'selected_method': str,
+            'reason': str
+        }
+    """
+    if not CONFIG.get('use_atr_stops', False):
+        return {
+            'stop_price': fib_stop_price,
+            'atr_stop': None,
+            'fib_stop': fib_stop_price,
+            'selected_method': 'Fibonacci',
+            'reason': 'ATR stops disabled'
+        }
+    
+    atr_result = calculate_atr_stop_loss(df, entry_price, side)
+    
+    # If ATR calculation fails, fall back to Fibonacci
+    if atr_result is None:
+        return {
+            'stop_price': fib_stop_price,
+            'atr_stop': None,
+            'fib_stop': fib_stop_price,
+            'selected_method': 'Fibonacci',
+            'reason': 'ATR calculation failed, using Fibonacci'
+        }
+    
+    atr_stop = atr_result['stop_price']
+    method_preference = CONFIG.get('atr_stop_method', 'wider')  # 'wider', 'tighter', or 'fibonacci'
+    
+    try:
+        if side == 'long':
+            atr_distance = entry_price - atr_stop
+            fib_distance = entry_price - fib_stop_price
+            
+            # Validate distances are positive
+            if atr_distance <= 0 or fib_distance <= 0:
+                return {
+                    'stop_price': fib_stop_price,
+                    'atr_stop': atr_stop,
+                    'fib_stop': fib_stop_price,
+                    'selected_method': 'Fibonacci',
+                    'reason': 'Invalid ATR distance, using Fibonacci'
+                }
+            
+            if method_preference == 'wider':
+                # Use the stop that gives more room (less risk)
+                if atr_stop < fib_stop_price:
+                    selected_stop = atr_stop
+                    selected_method = 'ATR'
+                    reason = f"ATR stop is wider (less risk): {atr_distance:.5f} vs {fib_distance:.5f}"
+                else:
+                    selected_stop = fib_stop_price
+                    selected_method = 'Fibonacci'
+                    reason = f"Fibonacci stop is wider: {fib_distance:.5f} vs {atr_distance:.5f}"
+            
+            elif method_preference == 'tighter':
+                # Use the stop that's closer (more risk, tighter SL)
+                if atr_stop > fib_stop_price:
+                    selected_stop = atr_stop
+                    selected_method = 'ATR'
+                    reason = f"ATR stop is tighter (more precise): {atr_distance:.5f} vs {fib_distance:.5f}"
+                else:
+                    selected_stop = fib_stop_price
+                    selected_method = 'Fibonacci'
+                    reason = f"Fibonacci stop is tighter: {fib_distance:.5f} vs {atr_distance:.5f}"
+            
+            else:  # 'fibonacci'
+                selected_stop = fib_stop_price
+                selected_method = 'Fibonacci'
+                reason = "Using Fibonacci stop (preference)"
+        
+        else:  # short
+            atr_distance = atr_stop - entry_price
+            fib_distance = fib_stop_price - entry_price
+            
+            # Validate distances are positive
+            if atr_distance <= 0 or fib_distance <= 0:
+                return {
+                    'stop_price': fib_stop_price,
+                    'atr_stop': atr_stop,
+                    'fib_stop': fib_stop_price,
+                    'selected_method': 'Fibonacci',
+                    'reason': 'Invalid ATR distance, using Fibonacci'
+                }
+            
+            if method_preference == 'wider':
+                if atr_stop > fib_stop_price:
+                    selected_stop = atr_stop
+                    selected_method = 'ATR'
+                    reason = f"ATR stop is wider (less risk): {atr_distance:.5f} vs {fib_distance:.5f}"
+                else:
+                    selected_stop = fib_stop_price
+                    selected_method = 'Fibonacci'
+                    reason = f"Fibonacci stop is wider: {fib_distance:.5f} vs {atr_distance:.5f}"
+            
+            elif method_preference == 'tighter':
+                if atr_stop < fib_stop_price:
+                    selected_stop = atr_stop
+                    selected_method = 'ATR'
+                    reason = f"ATR stop is tighter (more precise): {atr_distance:.5f} vs {fib_distance:.5f}"
+                else:
+                    selected_stop = fib_stop_price
+                    selected_method = 'Fibonacci'
+                    reason = f"Fibonacci stop is tighter: {fib_distance:.5f} vs {atr_distance:.5f}"
+            
+            else:  # 'fibonacci'
+                selected_stop = fib_stop_price
+                selected_method = 'Fibonacci'
+                reason = "Using Fibonacci stop (preference)"
+        
+        return {
+            'stop_price': selected_stop,
+            'atr_stop': atr_stop,
+            'fib_stop': fib_stop_price,
+            'selected_method': selected_method,
+            'reason': reason,
+            'atr_value': atr_result.get('atr_value') if atr_result else None
+        }
+    
+    except Exception as e:
+        logger.debug(f"Error comparing stop loss methods: {e}")
+        return {
+            'stop_price': fib_stop_price,
+            'atr_stop': atr_stop,
+            'fib_stop': fib_stop_price,
+            'selected_method': 'Fibonacci',
+            'reason': f'Error in comparison: {str(e)}'
+        }
 
 # --------------------------- TRAILING STOPS ----------------------------
 
