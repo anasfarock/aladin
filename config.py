@@ -1,5 +1,5 @@
 """
-Configuration Module for MT5 ICT Fibonacci Trading Bot
+Configuration Module for Aladin - MT5 Trading Bot
 Updated with Point-Based Trend System, Manual Trend Override, and Fundamental Analysis
 """
 
@@ -32,8 +32,8 @@ CONFIG = {
     # Trading Parameters
     'symbol': 'USDCAD',
     'backtest': False,
-    'start': '2025-11-10',
-    'end': '2025-11-12',
+    'start': '2025-11-07',
+    'end': '2025-11-09',
     'capital': 5000.0,
     'risk_pct': 0.5,
     
@@ -69,7 +69,7 @@ CONFIG = {
     'fib_levels': [0.618, 0.705, 0.786],
     'fib_tolerance': 0.0001,
     'min_swing_size': 0.0005,
-    'max_fib_age': 50,
+    'max_fib_age': 100,
     'fib_confirmation_bars': 2,
     
     # Chart Visualization Settings
@@ -148,7 +148,12 @@ CONFIG = {
 }
 
 def get_mt5_timeframes():
-    """Get MT5 timeframes mapping"""
+    """
+    Returns a dictionary mapping of string representations of timeframes to their
+    corresponding MetaTrader 5 constants. This is used to easily convert between
+    human-readable timeframes (e.g., 'H1') and the format required by the MT5 API.
+    If the MT5 library is not available, it returns an empty dictionary.
+    """
     if not MT5_AVAILABLE:
         return {}
     return {
@@ -164,7 +169,15 @@ def get_mt5_timeframes():
 MT5_TIMEFRAMES = get_mt5_timeframes()
 
 def validate_config():
-    """Validate configuration settings"""
+    """
+    Performs a series of checks to validate the integrity and correctness of the
+    settings defined in the CONFIG dictionary. This function ensures that the bot
+    operates with valid parameters, preventing common configuration errors at runtime.
+    It checks for the availability of MT5, validates timeframe settings, Fibonacci
+    parameters, concurrent trade limits, and trend analysis settings. It also logs
+    key configuration details and warnings for settings that might lead to
+    unexpected behavior.
+    """
     if not MT5_AVAILABLE and not CONFIG['backtest']:
         raise RuntimeError("MT5 not available for live trading")
     
