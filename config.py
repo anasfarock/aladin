@@ -32,8 +32,8 @@ CONFIG = {
     # Trading Parameters
     'symbol': 'USDCAD',
     'backtest': False,
-    'start': '2024-06-25',
-    'end': '2025-06-30',
+    'start': '2025-11-10',
+    'end': '2025-11-12',
     'capital': 5000.0,
     'risk_pct': 0.5,
     
