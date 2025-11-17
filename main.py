@@ -221,6 +221,14 @@ Examples:
         type=float,
         help=f'Macro confidence threshold (default: {CONFIG["macro_confidence_min"]}%)'
     )
+
+    adx_group.add_argument(
+        '--adx-timeframes',
+        type=str,
+        nargs='+',
+        help=f'ADX analysis timeframes (default: {CONFIG["adx_timeframes"]}). '
+             f'Example: --adx-timeframes D1 H4 H1'
+    )
     
     macro_group.add_argument(
         '--verbose-macro',
@@ -299,6 +307,11 @@ def update_config_from_args(args):
         logger.info(f"Manual Trend Override Enabled via CLI")
         logger.info(f"Trend Direction: {args.manual_trend.upper()}")
         logger.info(f"{'='*70}\n")
+
+    # ADX Timeframes
+    if args.adx_timeframes:
+        CONFIG['adx_timeframes'] = args.adx_timeframes
+        logger.info(f"✓ ADX timeframes set to: {', '.join(args.adx_timeframes)}")
     
     if args.auto_trend:
         CONFIG['use_manual_trend'] = False

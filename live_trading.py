@@ -134,9 +134,13 @@ def _check_macro_filter(symbol, technical_trend, macro_analysis):
         'aligned': aligned
     }
 
-def _check_adx_filter(df_d1, df_h4, df_h1, trend):
+def _check_adx_filter(adx_dataframes_dict, trend):
     """
     Check if ADX filter validates the trade setup
+    
+    Args:
+        adx_dataframes_dict: dict with keys from CONFIG['adx_timeframes'] and dataframe values
+        trend: 'bullish', 'bearish', or 'neutral'
     
     Returns:
         {
@@ -155,7 +159,7 @@ def _check_adx_filter(df_d1, df_h4, df_h1, trend):
         }
     
     # Check ADX across timeframes
-    adx_analysis = check_adx_across_timeframes(df_d1, df_h4, df_h1, trend)
+    adx_analysis = check_adx_across_timeframes(adx_dataframes_dict, trend)
     
     # Log ADX analysis if verbose mode enabled
     if CONFIG.get('verbose_adx_analysis', True):
@@ -164,7 +168,7 @@ def _check_adx_filter(df_d1, df_h4, df_h1, trend):
         logger.info("📊 ADX TREND STRENGTH ANALYSIS")
         logger.info("="*70)
         
-        for tf_name in ['D1', 'H4', 'H1']:
+        for tf_name in CONFIG['adx_timeframes']:
             adx_check = adx_analysis['timeframes'][tf_name]
             logger.info(f"\n{tf_name} Timeframe:")
             logger.info(f"  ADX Value: {adx_check['adx_value']:.2f}")
@@ -176,19 +180,20 @@ def _check_adx_filter(df_d1, df_h4, df_h1, trend):
             logger.info(f"  Status: {adx_check['reason']}")
     
     threshold = CONFIG.get('adx_strength_threshold', 25)
+    primary_tf = CONFIG['adx_timeframes'][0]  # Usually D1
     
-    # Check if D1 ADX is above threshold (most important)
-    d1_adx = adx_analysis['timeframes']['D1']
+    # Check if primary ADX timeframe is above threshold (most important)
+    primary_adx = adx_analysis['timeframes'][primary_tf]
     
-    if d1_adx['adx_value'] < threshold:
+    if primary_adx['adx_value'] < threshold:
         should_skip = True
-        reason = f"⛔ D1 ADX too weak ({d1_adx['adx_value']:.2f} < {threshold}) - Trend not confirmed"
-    elif not d1_adx['di_aligned']:
+        reason = f"⛔ {primary_tf} ADX too weak ({primary_adx['adx_value']:.2f} < {threshold}) - Trend not confirmed"
+    elif not primary_adx['di_aligned']:
         should_skip = True
-        reason = f"⛔ D1 DI lines not aligned with {trend.upper()} trend"
+        reason = f"⛔ {primary_tf} DI lines not aligned with {trend.upper()} trend"
     else:
         should_skip = False
-        reason = f"✓ ADX confirms {trend.upper()} trend (D1 ADX: {d1_adx['adx_value']:.2f})"
+        reason = f"✓ ADX confirms {trend.upper()} trend ({primary_tf} ADX: {primary_adx['adx_value']:.2f})"
     
     return {
         'pass_filter': not should_skip,
@@ -220,24 +225,31 @@ def live_run_once(symbol):
         # Fetch live data for all timeframes
         logger.debug("Fetching live market data...")
         df_entry = fetch_live_data(symbol, CONFIG['timeframe_entry'], 500)
-        df_d1 = fetch_live_data(symbol, 'D1', 500)
-        df_h4 = fetch_live_data(symbol, 'H4', 500)
-        df_h1 = fetch_live_data(symbol, 'H1', 500)
         
-        # Compute indicators (including ADX and ATR)
+        # Fetch trend timeframes
+        df_trend = {}
+        for tf in CONFIG['trend_timeframes']:
+            df_trend[tf] = fetch_live_data(symbol, tf, 500)
+            df_trend[tf] = compute_indicators(df_trend[tf])
+        
+        # Fetch ADX-specific timeframes
+        adx_dataframes = {}
+        for tf in CONFIG['adx_timeframes']:
+            if tf not in adx_dataframes:
+                adx_dataframes[tf] = fetch_live_data(symbol, tf, 500)
+                adx_dataframes[tf] = compute_indicators(adx_dataframes[tf])
+        
+        # Compute entry timeframe indicators
         df_entry = compute_indicators(df_entry)
-        df_d1 = compute_indicators(df_d1)
-        df_h4 = compute_indicators(df_h4)
-        df_h1 = compute_indicators(df_h1)
         
         # Update Fibonacci setups
         fib_tracker.update_fibonacci_setups(df_entry)
         valid_setups = fib_tracker.get_valid_setups()
         
-        # Determine technical trend
-        trend = determine_trend(df_d1, df_h4, df_h1)
-        trend_details = get_trend_details(df_d1, df_h4, df_h1)
-        trend_confidence = get_trend_confidence(df_d1, df_h4, df_h1)
+        # Determine technical trend (uses trend_timeframes)
+        trend = determine_trend(df_trend['D1'], df_trend['H4'], df_trend['H1'])
+        trend_details = get_trend_details(df_trend['D1'], df_trend['H4'], df_trend['H1'])
+        trend_confidence = get_trend_confidence(df_trend['D1'], df_trend['H4'], df_trend['H1'])
         
         # Display technical trend analysis
         logger.info("="*70)
@@ -260,7 +272,7 @@ def live_run_once(symbol):
         logger.info(f"Position Limit: {current_count}/{max_allowed} trades on {symbol}")
         
         # ===== ADX FILTER CHECK =====
-        adx_filter_result = _check_adx_filter(df_d1, df_h4, df_h1, trend)
+        adx_filter_result = _check_adx_filter(adx_dataframes, trend)
         
         if adx_filter_result['should_skip']:
             logger.warning(f"\n{adx_filter_result['reason']}")

@@ -41,6 +41,9 @@ CONFIG = {
     'timeframe_entry': 'M15',
     'trend_timeframes': ['D1', 'H4', 'H1'],
     
+    # ===== ADX SPECIFIC TIMEFRAMES =====
+    'adx_timeframes': ['H1'],  # Independent ADX timeframe configuration
+    
     # Technical Indicators
     'boll_period': 20,
     'boll_std': 2,
@@ -241,6 +244,11 @@ def validate_config():
         if tf not in MT5_TIMEFRAMES:
             raise ValueError(f"Unsupported trend timeframe: {tf}")
     
+    # Validate ADX timeframes (NEW)
+    for tf in CONFIG['adx_timeframes']:
+        if tf not in MT5_TIMEFRAMES:
+            raise ValueError(f"Unsupported ADX timeframe: {tf}")
+    
     # Validate Fibonacci settings
     if CONFIG['min_fib_candles'] < 1:
         raise ValueError("min_fib_candles must be at least 1")
@@ -279,6 +287,7 @@ def validate_config():
         
         logger.info("="*70)
         logger.info("✓ ADX FILTER ENABLED")
+        logger.info(f"  Timeframes: {', '.join(CONFIG['adx_timeframes'])}")
         logger.info(f"  Period: {CONFIG['adx_period']}")
         logger.info(f"  Strength Threshold: {CONFIG['adx_strength_threshold']}")
         logger.info(f"  Extreme Threshold: {CONFIG['adx_extreme_threshold']}")
@@ -323,6 +332,7 @@ def validate_config():
             enabled_indicators.append('Bollinger Bands')
         
         logger.info(f"Trend analysis using: {', '.join(enabled_indicators) if enabled_indicators else 'None'}")
+        logger.info(f"Trend timeframes: {', '.join(CONFIG['trend_timeframes'])}")
         
         # Validate trend thresholds
         if CONFIG['trend_bullish_threshold'] <= 0:
@@ -343,7 +353,7 @@ def validate_config():
         
         max_points_per_indicator = {'ma': 3, 'rsi': 3, 'vwap': 2, 'bb': 2}
         max_points_per_tf = sum(max_points_per_indicator[ind] for ind in active_indicators)
-        max_total_points = max_points_per_tf * 6
+        max_total_points = max_points_per_tf * len(CONFIG['trend_timeframes'])
         
         logger.info(f"Point-Based Trend System:")
         logger.info(f"  Max possible points: ±{max_total_points}")

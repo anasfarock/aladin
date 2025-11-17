@@ -126,18 +126,19 @@ def check_adx_confirmation(df, trend):
         'reason': reason
     }
 
-def check_adx_across_timeframes(df_d1, df_h4, df_h1, trend):
+def check_adx_across_timeframes(adx_dataframes_dict, trend):
     """
-    Check ADX confirmation across multiple timeframes
+    Check ADX confirmation across multiple timeframes configured in CONFIG['adx_timeframes']
+    
+    Args:
+        adx_dataframes_dict: dict with keys from CONFIG['adx_timeframes'] and dataframe values
+            Example: {'D1': df_d1, 'H4': df_h4, 'H1': df_h1}
+        trend: 'bullish', 'bearish', or 'neutral'
     
     Returns:
         dict with ADX status for each timeframe
     """
-    timeframes = [
-        ('D1', df_d1),
-        ('H4', df_h4),
-        ('H1', df_h1)
-    ]
+    timeframes = [(tf, adx_dataframes_dict[tf]) for tf in CONFIG['adx_timeframes']]
     
     adx_data = {}
     all_confirmed = True
@@ -146,15 +147,18 @@ def check_adx_across_timeframes(df_d1, df_h4, df_h1, trend):
         adx_check = check_adx_confirmation(df, trend)
         adx_data[tf_name] = adx_check
         
-        # For strong trend confirmation, at least D1 should confirm
-        if tf_name == 'D1' and not adx_check['confirmed']:
+        # For strong trend confirmation, the first ADX timeframe should confirm
+        if tf_name == CONFIG['adx_timeframes'][0] and not adx_check['confirmed']:
             all_confirmed = False
+    
+    # Get ADX values for all configured timeframes
+    adx_values = [adx_data[tf]['adx_value'] for tf in CONFIG['adx_timeframes']]
     
     return {
         'timeframes': adx_data,
         'all_confirmed': all_confirmed,
-        'highest_adx': max(adx_data[tf]['adx_value'] for tf in ['D1', 'H4', 'H1']),
-        'lowest_adx': min(adx_data[tf]['adx_value'] for tf in ['D1', 'H4', 'H1'])
+        'highest_adx': max(adx_values),
+        'lowest_adx': min(adx_values)
     }
 
 # --------------------------- POINT-BASED TREND ANALYSIS ----------------------------
