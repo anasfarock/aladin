@@ -32,7 +32,7 @@ CONFIG = {
     # Trading Parameters
     'symbol': 'USDCAD',
     'backtest': False,
-    'start': '2024-11-10',
+    'start': '2025-11-10',
     'end': '2025-11-16',
     'capital': 5000.0,
     'risk_pct': 0.5,
@@ -77,7 +77,7 @@ CONFIG = {
     
     # Fibonacci Settings
     'fib_lookback': 30,
-    'min_fib_candles': 5,
+    'min_fib_candles': 7,
     'fib_levels': [0.618, 0.705, 0.786],
     'fib_tolerance': 0.0001,
     'min_swing_size': 0.0005,

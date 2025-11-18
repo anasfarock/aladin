@@ -24,9 +24,13 @@ def calculate_max_drawdown(equity_curve):
     drawdown = (equity_curve - peak) / peak * 100
     return abs(drawdown.min())
 
-def check_adx_filter_backtest(df_d1, df_h4, df_h1, trend):
+def check_adx_filter_backtest(adx_dataframes_dict, trend):
     """
     Check if ADX filter validates the trade setup during backtest
+    
+    Args:
+        adx_dataframes_dict: dict with keys from CONFIG['adx_timeframes'] and dataframe values
+        trend: 'bullish', 'bearish', or 'neutral'
     
     Returns:
         bool: True if ADX confirms trend, False otherwise
@@ -35,16 +39,17 @@ def check_adx_filter_backtest(df_d1, df_h4, df_h1, trend):
         return True  # ADX filter disabled, pass all trades
     
     try:
-        adx_analysis = check_adx_across_timeframes(df_d1, df_h4, df_h1, trend)
+        adx_analysis = check_adx_across_timeframes(adx_dataframes_dict, trend)
         
-        # Check D1 ADX - most important
-        d1_adx = adx_analysis['timeframes']['D1']
+        # Check primary ADX timeframe (usually D1)
+        primary_tf = CONFIG['adx_timeframes'][0]
+        primary_adx = adx_analysis['timeframes'][primary_tf]
         threshold = CONFIG.get('adx_strength_threshold', 25)
         
         # Trade passes if:
-        # 1. D1 ADX is above threshold AND
+        # 1. Primary ADX is above threshold AND
         # 2. +DI/-DI are aligned with trend
-        adx_confirms = (d1_adx['adx_value'] >= threshold and d1_adx['di_aligned'])
+        adx_confirms = (primary_adx['adx_value'] >= threshold and primary_adx['di_aligned'])
         
         return adx_confirms
     
@@ -88,7 +93,8 @@ def backtest(symbol, start, end, timeframe):
     
     # Display ADX filter status
     if CONFIG.get('use_adx_filter', False):
-        logger.info(f"ADX Filter: ENABLED (Threshold: {CONFIG['adx_strength_threshold']})")
+        logger.info(f"ADX Filter: ENABLED (Timeframes: {', '.join(CONFIG['adx_timeframes'])}, "
+                   f"Threshold: {CONFIG['adx_strength_threshold']})")
     else:
         logger.info("ADX Filter: DISABLED")
     
@@ -106,13 +112,34 @@ def backtest(symbol, start, end, timeframe):
     utc_to = datetime.fromisoformat(end)
     extended_from = utc_from - timedelta(days=90)
     
-    # Fetch data
+    # Fetch data for trend timeframes
     try:
         logger.info("Fetching historical data...")
         df = fetch_mt5_df(symbol, tf, extended_from, utc_to, min_bars_expected=CONFIG['min_bars_required'])
-        df_d1 = fetch_mt5_df(symbol, MT5_TIMEFRAMES['D1'], extended_from, utc_to, min_bars_expected=10)
-        df_h4 = fetch_mt5_df(symbol, MT5_TIMEFRAMES['H4'], extended_from, utc_to, min_bars_expected=10)
-        df_h1 = fetch_mt5_df(symbol, MT5_TIMEFRAMES['H1'], extended_from, utc_to, min_bars_expected=10)
+        
+        # Fetch trend timeframes
+        trend_dataframes = {}
+        for tf_name in CONFIG['trend_timeframes']:
+            trend_dataframes[tf_name] = fetch_mt5_df(
+                symbol, 
+                MT5_TIMEFRAMES[tf_name], 
+                extended_from, 
+                utc_to, 
+                min_bars_expected=10
+            )
+        
+        # Fetch ADX-specific timeframes
+        adx_dataframes = {}
+        for tf_name in CONFIG['adx_timeframes']:
+            if tf_name not in adx_dataframes:
+                adx_dataframes[tf_name] = fetch_mt5_df(
+                    symbol, 
+                    MT5_TIMEFRAMES[tf_name], 
+                    extended_from, 
+                    utc_to, 
+                    min_bars_expected=10
+                )
+    
     except Exception as e:
         logger.error(f"Data fetch failed: {e}")
         raise
@@ -120,9 +147,14 @@ def backtest(symbol, start, end, timeframe):
     # Compute indicators (including ADX and ATR)
     logger.info("Computing technical indicators (including ADX and ATR)...")
     df = compute_indicators(df)
-    df_d1 = compute_indicators(df_d1)
-    df_h4 = compute_indicators(df_h4)
-    df_h1 = compute_indicators(df_h1)
+    
+    # Compute indicators for trend timeframes
+    for tf_name in trend_dataframes:
+        trend_dataframes[tf_name] = compute_indicators(trend_dataframes[tf_name])
+    
+    # Compute indicators for ADX timeframes
+    for tf_name in adx_dataframes:
+        adx_dataframes[tf_name] = compute_indicators(adx_dataframes[tf_name])
     
     # Filter to backtest period
     df = df[df['time'] >= utc_from].reset_index(drop=True)
@@ -151,11 +183,21 @@ def backtest(symbol, start, end, timeframe):
         current_time = current_bar['time']
         
         # Get timeframe slices up to current time
-        d1_slice = df_d1[df_d1['time'] <= current_time].copy()
-        h4_slice = df_h4[df_h4['time'] <= current_time].copy()
-        h1_slice = df_h1[df_h1['time'] <= current_time].copy()
+        trend_slices = {}
+        for tf_name in CONFIG['trend_timeframes']:
+            trend_slices[tf_name] = trend_dataframes[tf_name][trend_dataframes[tf_name]['time'] <= current_time].copy()
         
-        if d1_slice.empty or h4_slice.empty or h1_slice.empty:
+        # Check all trend slices have data
+        if any(len(trend_slices[tf]) == 0 for tf in CONFIG['trend_timeframes']):
+            continue
+        
+        # Get ADX timeframe slices up to current time
+        adx_slices = {}
+        for tf_name in CONFIG['adx_timeframes']:
+            adx_slices[tf_name] = adx_dataframes[tf_name][adx_dataframes[tf_name]['time'] <= current_time].copy()
+        
+        # Check all ADX slices have data
+        if any(len(adx_slices[tf]) == 0 for tf in CONFIG['adx_timeframes']):
             continue
         
         # STEP 1: Execute pending entry from previous bar (avoid lookahead bias)
@@ -419,8 +461,12 @@ def backtest(symbol, start, end, timeframe):
         if not fib_setups:
             continue
         
-        # Determine trend
-        trend = determine_trend(d1_slice, h4_slice, h1_slice)
+        # Determine trend (using trend timeframes)
+        trend = determine_trend(
+            trend_slices[CONFIG['trend_timeframes'][0]],
+            trend_slices[CONFIG['trend_timeframes'][1]] if len(CONFIG['trend_timeframes']) > 1 else trend_slices[CONFIG['trend_timeframes'][0]],
+            trend_slices[CONFIG['trend_timeframes'][2]] if len(CONFIG['trend_timeframes']) > 2 else trend_slices[CONFIG['trend_timeframes'][0]]
+        )
         trend_counts[trend] += 1
         
         # Log trend changes (only in automatic mode and when trend changes)
@@ -437,8 +483,8 @@ def backtest(symbol, start, end, timeframe):
         )
         
         if entry_signal:
-            # Check ADX filter
-            adx_passed = check_adx_filter_backtest(d1_slice, h4_slice, h1_slice, trend)
+            # Check ADX filter (using ADX timeframes)
+            adx_passed = check_adx_filter_backtest(adx_slices, trend)
             
             if not adx_passed and CONFIG.get('use_adx_filter', False):
                 adx_filtered_signals += 1
@@ -562,9 +608,11 @@ def backtest(symbol, start, end, timeframe):
         'trend_bearish_bars': trend_counts['bearish'],
         'trend_neutral_bars': trend_counts['neutral'],
         'trend_mode': 'manual' if CONFIG.get('use_manual_trend', False) else 'automatic',
+        'trend_timeframes': CONFIG['trend_timeframes'],
         'manual_trend_trades': manual_trades,
         'auto_trend_trades': auto_trades,
         'adx_filter_enabled': CONFIG.get('use_adx_filter', False),
+        'adx_timeframes': CONFIG['adx_timeframes'],
         'adx_signals_filtered': adx_filtered_signals,
         'adx_passed_trades': adx_passed_trades,
         'adx_info_trades': adx_info_trades,
@@ -585,10 +633,13 @@ def backtest(symbol, start, end, timeframe):
         print(f'Trend Mode: MANUAL ({CONFIG["manual_trend"].upper()})')
     else:
         print(f'Trend Mode: AUTOMATIC (Point-Based System)')
+    print(f'Trend Timeframes: {", ".join(CONFIG["trend_timeframes"])}')
     
     # Print ADX filter info
     if CONFIG.get('use_adx_filter', False):
-        print(f'ADX Filter: ENABLED (Threshold: {CONFIG["adx_strength_threshold"]})')
+        print(f'ADX Filter: ENABLED')
+        print(f'ADX Timeframes: {", ".join(CONFIG["adx_timeframes"])}')
+        print(f'ADX Threshold: {CONFIG["adx_strength_threshold"]}')
         print(f'Signals Filtered by ADX: {adx_filtered_signals}')
     else:
         print(f'ADX Filter: DISABLED')
