@@ -42,7 +42,7 @@ CONFIG = {
     'trend_timeframes': ['D1', 'H4', 'H1'],
     
     # ===== ADX SPECIFIC TIMEFRAMES =====
-    'adx_timeframes': ['H1'],  # Independent ADX timeframe configuration
+    'adx_timeframes': ['M15'],  # Independent ADX timeframe configuration
     
     # Technical Indicators
     'boll_period': 20,
