@@ -32,7 +32,7 @@ CONFIG = {
     # Trading Parameters
     'symbol': 'USDCAD',
     'backtest': False,
-    'start': '2024-11-13',
+    'start': '2025-11-10',
     'end': '2025-11-16',
     'capital': 5000.0,
     'risk_pct': 0.5,
@@ -42,7 +42,7 @@ CONFIG = {
     'trend_timeframes': ['D1', 'H4', 'H1'],
     
     # ===== ADX SPECIFIC TIMEFRAMES =====
-    'adx_timeframes': ['M15', 'H1', 'H4', 'M30'],  # Independent ADX timeframe configuration
+    'adx_timeframes': ['M15', 'H4', 'H1', 'D1'],  # Independent ADX timeframe configuration
     
     # Technical Indicators
     'boll_period': 20,
@@ -55,10 +55,9 @@ CONFIG = {
     # ===== ADX SETTINGS =====
     'adx_period': 20,                          # ADX calculation period
     'use_adx_filter': True,                    # Enable/disable ADX filter
-    'adx_strength_threshold': 30,              # Minimum ADX value to confirm strong trend
+    'adx_strength_threshold': 25,              # Minimum ADX value to confirm trend strength
     'adx_extreme_threshold': 80,               # ADX value indicating very strong trend
     'adx_weak_threshold': 20,                  # ADX value below which trend is weak
-    'adx_di_crossover_check': True,            # Check if +DI > -DI for bullish, -DI > +DI for bearish
     'adx_confirmation_bars': 2,                # Number of bars ADX must stay above threshold
     
     # Manual Trend Override
@@ -121,13 +120,13 @@ CONFIG = {
     'reddit_client_secret': os.getenv('REDDIT_CLIENT_SECRET', ''),
     
     # Macro Analysis Features Toggle
-    'analyze_cot_reports': True,
-    'analyze_interest_rates': True,
-    'analyze_economic_events': True,
-    'analyze_macro_factors': True,
+    'analyze_cot_reports': False,
+    'analyze_interest_rates': False,
+    'analyze_economic_events': False,
+    'analyze_macro_factors': False,
     
     # News & Social Media Analysis Toggle
-    'analyze_news': True,
+    'analyze_news': False,
     'analyze_twitter': False,
     'analyze_reddit': False,
     
@@ -150,8 +149,8 @@ CONFIG = {
 
     # ===== ATR-BASED STOP LOSS SETTINGS =====
     'use_atr_stops': True,                         # Enable/disable ATR-based stop loss
-    'atr_stop_multiplier': 1.5,                    # Multiplier for ATR (e.g., 2.0 = 2x ATR)
-    'atr_stop_method': 'tighter',                  # 'wider', 'tighter', or 'fibonacci'
+    'atr_stop_multiplier': 2.0,                    # Multiplier for ATR (e.g., 2.0 = 2x ATR)
+    'atr_stop_method': 'wider',                    # 'wider', 'tighter', or 'fibonacci'
                                                    # wider: Use whichever stop gives more room
                                                    # tighter: Use whichever stop is closer
                                                    # fibonacci: Always use Fibonacci stops
@@ -244,7 +243,7 @@ def validate_config():
         if tf not in MT5_TIMEFRAMES:
             raise ValueError(f"Unsupported trend timeframe: {tf}")
     
-    # Validate ADX timeframes (NEW)
+    # Validate ADX timeframes
     for tf in CONFIG['adx_timeframes']:
         if tf not in MT5_TIMEFRAMES:
             raise ValueError(f"Unsupported ADX timeframe: {tf}")
@@ -292,7 +291,6 @@ def validate_config():
         logger.info(f"  Strength Threshold: {CONFIG['adx_strength_threshold']}")
         logger.info(f"  Extreme Threshold: {CONFIG['adx_extreme_threshold']}")
         logger.info(f"  Weak Threshold: {CONFIG['adx_weak_threshold']}")
-        logger.info(f"  +DI/-DI Crossover Check: {'YES' if CONFIG['adx_di_crossover_check'] else 'NO'}")
         logger.info(f"  Confirmation Bars: {CONFIG['adx_confirmation_bars']}")
         logger.info("="*70)
     

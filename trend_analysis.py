@@ -1,6 +1,6 @@
 """
-Trend Analysis Module - POINT-BASED SYSTEM with ADX Confirmation
-Multi-timeframe trend determination with ADX strength validation
+Trend Analysis Module - POINT-BASED SYSTEM with ADX Strength Validation
+Multi-timeframe trend determination with ADX trend strength validation (not direction)
 """
 
 import pandas as pd
@@ -32,11 +32,14 @@ def get_manual_trend():
 
 def check_adx_confirmation(df, trend):
     """
-    Check if ADX confirms the trend strength
+    Check if ADX confirms the trend STRENGTH (ignores DI direction check)
+    
+    ADX validates that the market is trending (has momentum), not ranging.
+    It does NOT care which direction the trend is - only that there IS a trend.
     
     Args:
         df: DataFrame with ADX, +DI, -DI columns
-        trend: 'bullish', 'bearish', or 'neutral'
+        trend: 'bullish', 'bearish', or 'neutral' (from your indicators)
     
     Returns:
         dict: {
@@ -45,27 +48,25 @@ def check_adx_confirmation(df, trend):
             'strength': str,  # 'strong', 'moderate', 'weak', 'absent'
             '+DI': float,
             '-DI': float,
-            'di_aligned': bool,  # True if DI lines align with trend
             'reason': str
         }
     """
     if df.empty or len(df) == 0:
         return {
             'confirmed': False,
-            'adx_value': np.nan,
+            'adx_value': float('nan'),
             'strength': 'absent',
-            '+DI': np.nan,
-            '-DI': np.nan,
-            'di_aligned': False,
+            '+DI': float('nan'),
+            '-DI': float('nan'),
             'reason': 'No data available'
         }
     
     import numpy as np
     
     last = df.iloc[-1]
-    adx_value = last.get('adx', np.nan)
-    plus_di = last.get('+DI', np.nan)
-    minus_di = last.get('-DI', np.nan)
+    adx_value = last.get('adx', float('nan'))
+    plus_di = last.get('+DI', float('nan'))
+    minus_di = last.get('-DI', float('nan'))
     
     # Check if values are valid
     if pd.isna(adx_value) or pd.isna(plus_di) or pd.isna(minus_di):
@@ -75,15 +76,14 @@ def check_adx_confirmation(df, trend):
             'strength': 'absent',
             '+DI': plus_di,
             '-DI': minus_di,
-            'di_aligned': False,
             'reason': 'ADX not yet calculated'
         }
     
     threshold = CONFIG.get('adx_strength_threshold', 25)
-    extreme = CONFIG.get('adx_extreme_threshold', 40)
-    weak = CONFIG.get('adx_weak_threshold', 20)
+    extreme = CONFIG.get('adx_extreme_threshold', 80)
+    weak = CONFIG.get('adx_weak_threshold', 25)
     
-    # Determine ADX strength
+    # Determine ADX strength (ONLY looking at ADX value, not direction)
     if adx_value >= extreme:
         strength = 'strong'
     elif adx_value >= threshold:
@@ -93,28 +93,16 @@ def check_adx_confirmation(df, trend):
     else:
         strength = 'absent'
     
-    # Check if +DI and -DI align with trend
-    di_aligned = False
-    if CONFIG.get('adx_di_crossover_check', True):
-        if trend == 'bullish':
-            di_aligned = plus_di > minus_di
-        elif trend == 'bearish':
-            di_aligned = minus_di > plus_di
-        else:
-            di_aligned = True  # Neutral doesn't require DI alignment
-    else:
-        di_aligned = True  # If not checking DI, consider it aligned
+    # ONLY CHECK: Is there enough trend strength?
+    # We trust your trend indicators (MA, BB, RSI) for direction
+    # ADX just confirms: "Yes, there is momentum behind this direction"
+    confirmed = (adx_value >= threshold)
     
-    # Determine if trend is confirmed
-    confirmed = (adx_value >= threshold) and di_aligned
-    
-    # Build reason string
-    if not di_aligned:
-        reason = f"DI lines misaligned (+DI: {plus_di:.2f}, -DI: {minus_di:.2f})"
-    elif adx_value < threshold:
-        reason = f"ADX too weak ({adx_value:.2f} < {threshold})"
+    # Build reason string (focus on trend strength, not direction)
+    if adx_value < threshold:
+        reason = f"Trend too weak ({adx_value:.2f} < {threshold}) - Market ranging/choppy"
     else:
-        reason = f"ADX confirms {trend.upper()} trend ({adx_value:.2f} {strength})"
+        reason = f"Trend strength confirmed ({adx_value:.2f}, {strength})"
     
     return {
         'confirmed': confirmed,
@@ -122,21 +110,24 @@ def check_adx_confirmation(df, trend):
         'strength': strength,
         '+DI': plus_di,
         '-DI': minus_di,
-        'di_aligned': di_aligned,
         'reason': reason
     }
 
 def check_adx_across_timeframes(adx_dataframes_dict, trend):
     """
-    Check ADX confirmation across multiple timeframes configured in CONFIG['adx_timeframes']
+    Check ADX trend strength across multiple timeframes
+    
+    IMPORTANT: ADX only validates trend STRENGTH, not direction.
+    Your MA/BB/RSI indicators determine direction (bullish/bearish).
+    ADX just ensures the market is trending, not ranging.
     
     Args:
         adx_dataframes_dict: dict with keys from CONFIG['adx_timeframes'] and dataframe values
             Example: {'D1': df_d1, 'H4': df_h4, 'H1': df_h1}
-        trend: 'bullish', 'bearish', or 'neutral'
+        trend: 'bullish', 'bearish', or 'neutral' (from your indicators)
     
     Returns:
-        dict with ADX status for each timeframe
+        dict with ADX strength status for each timeframe
     """
     timeframes = [(tf, adx_dataframes_dict[tf]) for tf in CONFIG['adx_timeframes']]
     
@@ -147,7 +138,7 @@ def check_adx_across_timeframes(adx_dataframes_dict, trend):
         adx_check = check_adx_confirmation(df, trend)
         adx_data[tf_name] = adx_check
         
-        # For strong trend confirmation, the first ADX timeframe should confirm
+        # For trend confirmation, the first ADX timeframe (usually D1) must pass
         if tf_name == CONFIG['adx_timeframes'][0] and not adx_check['confirmed']:
             all_confirmed = False
     

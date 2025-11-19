@@ -1,5 +1,5 @@
 """
-Live Trading Engine - Enhanced with ADX, ATR Stops, and Macro Analysis
+Live Trading Engine - Enhanced with ADX Strength Validation, ATR Stops, and Macro Analysis
 Shows ADX strength validation and ATR stop comparison before executing trades
 """
 
@@ -136,11 +136,14 @@ def _check_macro_filter(symbol, technical_trend, macro_analysis):
 
 def _check_adx_filter(adx_dataframes_dict, trend):
     """
-    Check if ADX filter validates the trade setup
+    Check if ADX filter validates the trend STRENGTH
+    
+    ADX only validates trend strength, not direction.
+    Direction comes from your MA/BB/RSI indicators.
     
     Args:
         adx_dataframes_dict: dict with keys from CONFIG['adx_timeframes'] and dataframe values
-        trend: 'bullish', 'bearish', or 'neutral'
+        trend: 'bullish', 'bearish', or 'neutral' (from your indicators)
     
     Returns:
         {
@@ -175,25 +178,20 @@ def _check_adx_filter(adx_dataframes_dict, trend):
             logger.info(f"  Strength: {adx_check['strength'].upper()}")
             logger.info(f"  +DI: {adx_check['+DI']:.2f}")
             logger.info(f"  -DI: {adx_check['-DI']:.2f}")
-            logger.info(f"  DI Aligned: {'✓ YES' if adx_check['di_aligned'] else '✗ NO'}")
-            logger.info(f"  Confirmed: {'✓ YES' if adx_check['confirmed'] else '✗ NO'}")
             logger.info(f"  Status: {adx_check['reason']}")
     
     threshold = CONFIG.get('adx_strength_threshold', 25)
-    primary_tf = CONFIG['adx_timeframes'][0]  # Usually D1
+    primary_tf = CONFIG['adx_timeframes'][0]  # Usually M15
     
     # Check if primary ADX timeframe is above threshold (most important)
     primary_adx = adx_analysis['timeframes'][primary_tf]
     
     if primary_adx['adx_value'] < threshold:
         should_skip = True
-        reason = f"⛔ {primary_tf} ADX too weak ({primary_adx['adx_value']:.2f} < {threshold}) - Trend not confirmed"
-    elif not primary_adx['di_aligned']:
-        should_skip = True
-        reason = f"⛔ {primary_tf} DI lines not aligned with {trend.upper()} trend"
+        reason = f"⛔ {primary_tf} ADX too weak ({primary_adx['adx_value']:.2f} < {threshold}) - Market ranging"
     else:
         should_skip = False
-        reason = f"✓ ADX confirms {trend.upper()} trend ({primary_tf} ADX: {primary_adx['adx_value']:.2f})"
+        reason = f"✓ ADX confirms trend strength ({primary_tf} ADX: {primary_adx['adx_value']:.2f})"
     
     return {
         'pass_filter': not should_skip,
@@ -549,8 +547,8 @@ def start_live_trading(symbol=None):
     # Display ADX status
     if CONFIG.get('use_adx_filter', False):
         logger.info(f"\n✓ ADX FILTER: ENABLED")
+        logger.info(f"   ADX Timeframes: {', '.join(CONFIG['adx_timeframes'])}")
         logger.info(f"   Strength Threshold: {CONFIG['adx_strength_threshold']}")
-        logger.info(f"   DI Crossover Check: {'YES' if CONFIG['adx_di_crossover_check'] else 'NO'}")
     else:
         logger.info(f"\n🔇 ADX FILTER: DISABLED")
     

@@ -1,5 +1,5 @@
 """
-Backtesting Module - With ADX Trend Confirmation and ATR Stop Loss
+Backtesting Module - With ADX Trend Strength Validation and ATR Stop Loss
 Historical simulation with ADX validation, ATR stops, and corrected dataframe slicing
 Updated to support Manual Trend Override, ADX Filter, and ATR Stop Loss Strategy
 """
@@ -26,14 +26,17 @@ def calculate_max_drawdown(equity_curve):
 
 def check_adx_filter_backtest(adx_dataframes_dict, trend):
     """
-    Check if ADX filter validates the trade setup during backtest
+    Check if ADX filter validates the trend STRENGTH during backtest
+    
+    ADX only validates trend strength, not direction.
+    Direction comes from your MA/BB/RSI indicators.
     
     Args:
         adx_dataframes_dict: dict with keys from CONFIG['adx_timeframes'] and dataframe values
-        trend: 'bullish', 'bearish', or 'neutral'
+        trend: 'bullish', 'bearish', or 'neutral' (from your indicators)
     
     Returns:
-        bool: True if ADX confirms trend, False otherwise
+        bool: True if ADX confirms trend strength, False otherwise
     """
     if not CONFIG.get('use_adx_filter', False):
         return True  # ADX filter disabled, pass all trades
@@ -41,15 +44,14 @@ def check_adx_filter_backtest(adx_dataframes_dict, trend):
     try:
         adx_analysis = check_adx_across_timeframes(adx_dataframes_dict, trend)
         
-        # Check primary ADX timeframe (usually D1)
+        # Check primary ADX timeframe (usually M15)
         primary_tf = CONFIG['adx_timeframes'][0]
         primary_adx = adx_analysis['timeframes'][primary_tf]
         threshold = CONFIG.get('adx_strength_threshold', 25)
         
         # Trade passes if:
-        # 1. Primary ADX is above threshold AND
-        # 2. +DI/-DI are aligned with trend
-        adx_confirms = (primary_adx['adx_value'] >= threshold and primary_adx['di_aligned'])
+        # Primary ADX is above threshold (only checking strength, not direction)
+        adx_confirms = (primary_adx['adx_value'] >= threshold)
         
         return adx_confirms
     
@@ -59,10 +61,10 @@ def check_adx_filter_backtest(adx_dataframes_dict, trend):
 
 def backtest(symbol, start, end, timeframe):
     """
-    Run ICT Fibonacci backtest with ADX confirmation, ATR stops, and corrected logic
+    Run ICT Fibonacci backtest with ADX strength validation, ATR stops, and corrected logic
     
     FEATURES:
-    - ADX trend confirmation (configurable threshold)
+    - ADX trend strength validation (configurable threshold)
     - ATR-based stop loss with Fibonacci comparison
     - Proper index synchronization for Fibonacci setups
     - Entry on next bar open (no lookahead bias)

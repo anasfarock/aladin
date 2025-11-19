@@ -46,8 +46,8 @@ Examples:
   # Run with custom ADX period
   python main.py --live --adx --adx-period 21
   
-  # Run with ADX and DI crossover check disabled
-  python main.py --live --adx --no-di-check
+  # Run with custom ADX timeframes
+  python main.py --live --adx --adx-timeframes M15 H1 H4
   
   # Run with custom symbol
   python main.py --live --symbol EURUSD
@@ -124,7 +124,7 @@ Examples:
     adx_group.add_argument(
         '--adx',
         action='store_true',
-        help='Enable ADX filter for trend confirmation'
+        help='Enable ADX filter for trend strength validation'
     )
     
     adx_group.add_argument(
@@ -158,9 +158,11 @@ Examples:
     )
     
     adx_group.add_argument(
-        '--no-di-check',
-        action='store_true',
-        help='Disable +DI/-DI crossover check'
+        '--adx-timeframes',
+        type=str,
+        nargs='+',
+        help=f'ADX analysis timeframes (default: {" ".join(CONFIG["adx_timeframes"])}). '
+             f'Example: --adx-timeframes M15 H1 H4'
     )
     
     adx_group.add_argument(
@@ -220,14 +222,6 @@ Examples:
         '--macro-confidence',
         type=float,
         help=f'Macro confidence threshold (default: {CONFIG["macro_confidence_min"]}%)'
-    )
-
-    adx_group.add_argument(
-        '--adx-timeframes',
-        type=str,
-        nargs='+',
-        help=f'ADX analysis timeframes (default: {CONFIG["adx_timeframes"]}). '
-             f'Example: --adx-timeframes D1 H4 H1'
     )
     
     macro_group.add_argument(
@@ -291,9 +285,9 @@ def update_config_from_args(args):
         CONFIG['adx_weak_threshold'] = args.adx_weak
         logger.info(f"✓ ADX weak threshold set to {args.adx_weak}")
     
-    if args.no_di_check:
-        CONFIG['adx_di_crossover_check'] = False
-        logger.info("🔇 +DI/-DI crossover check DISABLED")
+    if args.adx_timeframes:
+        CONFIG['adx_timeframes'] = args.adx_timeframes
+        logger.info(f"✓ ADX timeframes set to: {', '.join(args.adx_timeframes)}")
     
     if args.verbose_adx:
         CONFIG['verbose_adx_analysis'] = True
@@ -307,11 +301,6 @@ def update_config_from_args(args):
         logger.info(f"Manual Trend Override Enabled via CLI")
         logger.info(f"Trend Direction: {args.manual_trend.upper()}")
         logger.info(f"{'='*70}\n")
-
-    # ADX Timeframes
-    if args.adx_timeframes:
-        CONFIG['adx_timeframes'] = args.adx_timeframes
-        logger.info(f"✓ ADX timeframes set to: {', '.join(args.adx_timeframes)}")
     
     if args.auto_trend:
         CONFIG['use_manual_trend'] = False
@@ -355,7 +344,7 @@ def main():
     """Main function"""
     print("\n" + "="*70)
     print("ICT FIBONACCI TRADING BOT")
-    print("Enhanced with ADX Trend Confirmation & Macro Analysis")
+    print("Enhanced with ADX Trend Strength Validation & Macro Analysis")
     print("="*70 + "\n")
     
     # Parse arguments
@@ -387,14 +376,16 @@ def main():
     else:
         print(f"📊 Trend Mode: AUTOMATIC (Point-Based System)")
     
+    print(f"Trend Timeframes: {', '.join(CONFIG['trend_timeframes'])}")
+    
     # Display ADX configuration
     if CONFIG.get('use_adx_filter', False):
         print(f"\n✓ ADX FILTER: ENABLED")
+        print(f"   Timeframes: {', '.join(CONFIG['adx_timeframes'])}")
         print(f"   Period: {CONFIG['adx_period']}")
         print(f"   Strength Threshold: {CONFIG['adx_strength_threshold']}")
         print(f"   Extreme Threshold: {CONFIG['adx_extreme_threshold']}")
         print(f"   Weak Threshold: {CONFIG['adx_weak_threshold']}")
-        print(f"   DI Crossover Check: {'YES' if CONFIG['adx_di_crossover_check'] else 'NO'}")
     else:
         print(f"\n🔇 ADX FILTER: DISABLED")
     
