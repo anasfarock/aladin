@@ -32,7 +32,7 @@ CONFIG = {
     # Trading Parameters
     'symbol': 'USDCAD',
     'backtest': False,
-    'start': '2025-11-10',
+    'start': '2024-11-13',
     'end': '2025-11-16',
     'capital': 5000.0,
     'risk_pct': 0.5,
@@ -42,7 +42,7 @@ CONFIG = {
     'trend_timeframes': ['D1', 'H4', 'H1'],
     
     # ===== ADX SPECIFIC TIMEFRAMES =====
-    'adx_timeframes': ['M15'],  # Independent ADX timeframe configuration
+    'adx_timeframes': ['M15', 'H1', 'H4', 'M30'],  # Independent ADX timeframe configuration
     
     # Technical Indicators
     'boll_period': 20,
@@ -53,11 +53,11 @@ CONFIG = {
     'ma_slow': 18,
     
     # ===== ADX SETTINGS =====
-    'adx_period': 30,                          # ADX calculation period
+    'adx_period': 20,                          # ADX calculation period
     'use_adx_filter': True,                    # Enable/disable ADX filter
     'adx_strength_threshold': 30,              # Minimum ADX value to confirm strong trend
     'adx_extreme_threshold': 80,               # ADX value indicating very strong trend
-    'adx_weak_threshold': 25,                  # ADX value below which trend is weak
+    'adx_weak_threshold': 20,                  # ADX value below which trend is weak
     'adx_di_crossover_check': True,            # Check if +DI > -DI for bullish, -DI > +DI for bearish
     'adx_confirmation_bars': 2,                # Number of bars ADX must stay above threshold
     
@@ -77,7 +77,7 @@ CONFIG = {
     
     # Fibonacci Settings
     'fib_lookback': 30,
-    'min_fib_candles': 7,
+    'min_fib_candles': 5,
     'fib_levels': [0.618, 0.705, 0.786],
     'fib_tolerance': 0.0001,
     'min_swing_size': 0.0005,
