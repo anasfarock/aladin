@@ -1,7 +1,7 @@
 """
 Backtesting Module - With ADX Trend Strength Validation and ATR Stop Loss
 Historical simulation with ADX validation, ATR stops, and corrected dataframe slicing
-Updated to support Manual Trend Override, ADX Filter, and ATR Stop Loss Strategy
+Updated to support Manual Trend Override, ADX Filter, ATR Stop Loss Strategy, and ADX Manual Control
 """
 
 from datetime import datetime, timedelta
@@ -31,6 +31,8 @@ def check_adx_filter_backtest(adx_dataframes_dict, trend):
     ADX only validates trend strength, not direction.
     Direction comes from your MA/BB/RSI indicators.
     
+    Supports ADX manual control for cross-timeframe confirmation.
+    
     Args:
         adx_dataframes_dict: dict with keys from CONFIG['adx_timeframes'] and dataframe values
         trend: 'bullish', 'bearish', or 'neutral' (from your indicators)
@@ -44,14 +46,9 @@ def check_adx_filter_backtest(adx_dataframes_dict, trend):
     try:
         adx_analysis = check_adx_across_timeframes(adx_dataframes_dict, trend)
         
-        # Check primary ADX timeframe (usually M15)
-        primary_tf = CONFIG['adx_timeframes'][0]
-        primary_adx = adx_analysis['timeframes'][primary_tf]
-        threshold = CONFIG.get('adx_strength_threshold', 25)
-        
-        # Trade passes if:
-        # Primary ADX is above threshold (only checking strength, not direction)
-        adx_confirms = (primary_adx['adx_value'] >= threshold)
+        # The check_adx_across_timeframes function now handles manual control logic
+        # It returns 'all_confirmed' based on the configuration mode
+        adx_confirms = adx_analysis['all_confirmed']
         
         return adx_confirms
     
@@ -65,6 +62,7 @@ def backtest(symbol, start, end, timeframe):
     
     FEATURES:
     - ADX trend strength validation (configurable threshold)
+    - ADX manual control for cross-timeframe confirmation
     - ATR-based stop loss with Fibonacci comparison
     - Proper index synchronization for Fibonacci setups
     - Entry on next bar open (no lookahead bias)
@@ -97,6 +95,13 @@ def backtest(symbol, start, end, timeframe):
     if CONFIG.get('use_adx_filter', False):
         logger.info(f"ADX Filter: ENABLED (Timeframes: {', '.join(CONFIG['adx_timeframes'])}, "
                    f"Threshold: {CONFIG['adx_strength_threshold']})")
+        
+        if CONFIG.get('adx_manual_control', False):
+            mode = "STRICT (primary TF)" if CONFIG.get('adx_manual_control_strict', False) else "LOOSE (any TF)"
+            logger.info(f"ADX Manual Control: ENABLED - {mode}")
+            logger.info(f"ADX can confirm trends across different timeframes")
+        else:
+            logger.info("ADX Manual Control: DISABLED (exact timeframe match only)")
     else:
         logger.info("ADX Filter: DISABLED")
     
@@ -485,7 +490,7 @@ def backtest(symbol, start, end, timeframe):
         )
         
         if entry_signal:
-            # Check ADX filter (using ADX timeframes)
+            # Check ADX filter (using ADX timeframes with manual control support)
             adx_passed = check_adx_filter_backtest(adx_slices, trend)
             
             if not adx_passed and CONFIG.get('use_adx_filter', False):
@@ -615,6 +620,8 @@ def backtest(symbol, start, end, timeframe):
         'auto_trend_trades': auto_trades,
         'adx_filter_enabled': CONFIG.get('use_adx_filter', False),
         'adx_timeframes': CONFIG['adx_timeframes'],
+        'adx_manual_control': CONFIG.get('adx_manual_control', False),
+        'adx_manual_control_strict': CONFIG.get('adx_manual_control_strict', False),
         'adx_signals_filtered': adx_filtered_signals,
         'adx_passed_trades': adx_passed_trades,
         'adx_info_trades': adx_info_trades,
@@ -642,6 +649,14 @@ def backtest(symbol, start, end, timeframe):
         print(f'ADX Filter: ENABLED')
         print(f'ADX Timeframes: {", ".join(CONFIG["adx_timeframes"])}')
         print(f'ADX Threshold: {CONFIG["adx_strength_threshold"]}')
+        
+        # Print ADX manual control info
+        if CONFIG.get('adx_manual_control', False):
+            mode = "STRICT (primary TF)" if CONFIG.get('adx_manual_control_strict', False) else "LOOSE (any TF)"
+            print(f'ADX Manual Control: ENABLED - {mode}')
+        else:
+            print(f'ADX Manual Control: DISABLED')
+        
         print(f'Signals Filtered by ADX: {adx_filtered_signals}')
     else:
         print(f'ADX Filter: DISABLED')
