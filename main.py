@@ -14,8 +14,11 @@ Usage:
     # Run with ADX disabled
     python main.py --live --no-adx
     
-    # Run with ADX and macro analysis
-    python main.py --live --adx --fundamental-only
+    # Run with ADX cross-timeframe confirmation (manual control)
+    python main.py --live --adx --adx-manual-control
+    
+    # Run with ADX strict cross-timeframe (primary TF only)
+    python main.py --live --adx --adx-manual-control --adx-manual-strict
 """
 
 import argparse
@@ -48,6 +51,12 @@ Examples:
   
   # Run with custom ADX timeframes
   python main.py --live --adx --adx-timeframes M15 H1 H4
+  
+  # Run with ADX manual control (cross-timeframe confirmation)
+  python main.py --live --adx --adx-manual-control
+  
+  # Run with ADX manual control STRICT mode (primary TF only)
+  python main.py --live --adx --adx-manual-control --adx-manual-strict
   
   # Run with custom symbol
   python main.py --live --symbol EURUSD
@@ -163,6 +172,18 @@ Examples:
         nargs='+',
         help=f'ADX analysis timeframes (default: {" ".join(CONFIG["adx_timeframes"])}). '
              f'Example: --adx-timeframes M15 H1 H4'
+    )
+    
+    adx_group.add_argument(
+        '--adx-manual-control',
+        action='store_true',
+        help='Enable ADX manual control: allows ADX to confirm trends across different timeframes'
+    )
+    
+    adx_group.add_argument(
+        '--adx-manual-strict',
+        action='store_true',
+        help='Enable ADX manual control STRICT mode: primary timeframe must confirm (requires --adx-manual-control)'
     )
     
     adx_group.add_argument(
@@ -289,6 +310,17 @@ def update_config_from_args(args):
         CONFIG['adx_timeframes'] = args.adx_timeframes
         logger.info(f"✓ ADX timeframes set to: {', '.join(args.adx_timeframes)}")
     
+    if args.adx_manual_control:
+        CONFIG['adx_manual_control'] = True
+        logger.info("✓ ADX manual control ENABLED (cross-timeframe confirmation)")
+        
+        if args.adx_manual_strict:
+            CONFIG['adx_manual_control_strict'] = True
+            logger.info("  Mode: STRICT (primary timeframe must confirm)")
+        else:
+            CONFIG['adx_manual_control_strict'] = False
+            logger.info("  Mode: LOOSE (any timeframe can confirm)")
+    
     if args.verbose_adx:
         CONFIG['verbose_adx_analysis'] = True
         logger.info("🔊 Verbose ADX logging ENABLED")
@@ -386,6 +418,13 @@ def main():
         print(f"   Strength Threshold: {CONFIG['adx_strength_threshold']}")
         print(f"   Extreme Threshold: {CONFIG['adx_extreme_threshold']}")
         print(f"   Weak Threshold: {CONFIG['adx_weak_threshold']}")
+        
+        if CONFIG.get('adx_manual_control', False):
+            mode = "STRICT (primary TF)" if CONFIG.get('adx_manual_control_strict', False) else "LOOSE (any TF)"
+            print(f"   Manual Control: ENABLED - {mode}")
+            print(f"   ADX can confirm trends across different timeframes")
+        else:
+            print(f"   Manual Control: DISABLED (exact timeframe match only)")
     else:
         print(f"\n🔇 ADX FILTER: DISABLED")
     

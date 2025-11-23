@@ -121,9 +121,11 @@ def check_adx_across_timeframes(adx_dataframes_dict, trend):
     Your MA/BB/RSI indicators determine direction (bullish/bearish).
     ADX just ensures the market is trending, not ranging.
     
+    With adx_manual_control enabled, ADX can confirm trends across different timeframes.
+    
     Args:
         adx_dataframes_dict: dict with keys from CONFIG['adx_timeframes'] and dataframe values
-            Example: {'D1': df_d1, 'H4': df_h4, 'H1': df_h1}
+            Example: {'M15': df_m15, 'H1': df_h1, 'H4': df_h4}
         trend: 'bullish', 'bearish', or 'neutral' (from your indicators)
     
     Returns:
@@ -132,15 +134,34 @@ def check_adx_across_timeframes(adx_dataframes_dict, trend):
     timeframes = [(tf, adx_dataframes_dict[tf]) for tf in CONFIG['adx_timeframes']]
     
     adx_data = {}
-    all_confirmed = True
+    all_confirmed = False
+    any_confirmed = False
     
     for tf_name, df in timeframes:
         adx_check = check_adx_confirmation(df, trend)
         adx_data[tf_name] = adx_check
         
-        # For trend confirmation, the first ADX timeframe (usually D1) must pass
-        if tf_name == CONFIG['adx_timeframes'][0] and not adx_check['confirmed']:
-            all_confirmed = False
+        if adx_check['confirmed']:
+            any_confirmed = True
+    
+    # Determine confirmation logic based on manual control mode
+    if CONFIG.get('adx_manual_control', False):
+        # Manual control ENABLED: ADX can confirm across timeframes
+        if CONFIG.get('adx_manual_control_strict', False):
+            # STRICT mode: at least primary timeframe must confirm
+            primary_tf = CONFIG['adx_timeframes'][0]
+            all_confirmed = adx_data[primary_tf]['confirmed']
+            confirmation_logic = "strict (primary TF required)"
+        else:
+            # LOOSE mode: ANY timeframe can confirm
+            all_confirmed = any_confirmed
+            confirmation_logic = "loose (any TF confirms)"
+    else:
+        # Manual control DISABLED: requires exact timeframe matching
+        # Check primary timeframe only (original behavior)
+        primary_tf = CONFIG['adx_timeframes'][0]
+        all_confirmed = adx_data[primary_tf]['confirmed']
+        confirmation_logic = "disabled (exact match only)"
     
     # Get ADX values for all configured timeframes
     adx_values = [adx_data[tf]['adx_value'] for tf in CONFIG['adx_timeframes']]
@@ -148,6 +169,8 @@ def check_adx_across_timeframes(adx_dataframes_dict, trend):
     return {
         'timeframes': adx_data,
         'all_confirmed': all_confirmed,
+        'any_confirmed': any_confirmed,
+        'confirmation_logic': confirmation_logic,
         'highest_adx': max(adx_values),
         'lowest_adx': min(adx_values)
     }
