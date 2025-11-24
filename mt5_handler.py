@@ -153,7 +153,7 @@ def determine_filling_type(symbol):
     else:  # Return is available
         return mt5.ORDER_FILLING_RETURN
 
-# --------------------------- STOP VALIDATION (NEW) ----------------------------
+# --------------------------- STOP VALIDATION ----------------------------
 
 def adjust_stops_to_broker_limits(symbol, side, entry_price, stop_price, tp_price):
     """
@@ -300,14 +300,22 @@ def place_market_order(symbol, side, volume, sl, tp):
     3. Proper filling type detection
     4. Price normalization
     5. Retry logic with fresh prices
+    6. FIXED: Safe CONFIG access with defaults
     """
     symbol_info = get_symbol_info(symbol)
     
     # Determine proper filling type
     filling_type = determine_filling_type(symbol)
     
+    # Safe CONFIG access with defaults
+    max_retries = CONFIG.get('max_retries', 3)
+    retry_delay = CONFIG.get('retry_delay', 0.5)
+    slippage = CONFIG.get('slippage_points', 50)
+    
+    logger.debug(f"Order config - Max retries: {max_retries}, Retry delay: {retry_delay}s, Slippage: {slippage}")
+    
     # Retry loop for order placement
-    for attempt in range(CONFIG['max_retries']):
+    for attempt in range(max_retries):
         try:
             # Get FRESH tick price for this attempt
             current_price = get_current_price(symbol, side)
@@ -334,7 +342,7 @@ def place_market_order(symbol, side, volume, sl, tp):
             logger.info(f"Attempt {attempt + 1}: {side.upper()} {volume} lots @ {price}")
             logger.info(f"SL: {adjusted_sl}, TP: {adjusted_tp}, Filling: {filling_type}")
             
-            # Build request
+            # Build request with safe CONFIG access
             request = {
                 'action': mt5.TRADE_ACTION_DEAL,
                 'symbol': symbol,
@@ -343,7 +351,7 @@ def place_market_order(symbol, side, volume, sl, tp):
                 'price': price,
                 'sl': adjusted_sl,
                 'tp': adjusted_tp,
-                'deviation': CONFIG['slippage_points'],
+                'deviation': slippage,  # Use locally defined variable
                 'magic': 234000,
                 'comment': 'ICT Fibonacci Bot',
                 'type_time': mt5.ORDER_TIME_GTC,
@@ -357,11 +365,11 @@ def place_market_order(symbol, side, volume, sl, tp):
                 error = mt5.last_error()
                 logger.error(f"Order send returned None: {error}")
                 
-                if attempt < CONFIG['max_retries'] - 1:
-                    time.sleep(CONFIG['retry_delay'])
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
                     continue
                 else:
-                    raise RuntimeError(f"Order failed after {CONFIG['max_retries']} attempts: {error}")
+                    raise RuntimeError(f"Order failed after {max_retries} attempts: {error}")
             
             # Check result
             if result.retcode == mt5.TRADE_RETCODE_DONE:
@@ -372,8 +380,8 @@ def place_market_order(symbol, side, volume, sl, tp):
             elif result.retcode in [mt5.TRADE_RETCODE_REQUOTE, mt5.TRADE_RETCODE_PRICE_OFF]:
                 # Price changed, retry with new price
                 logger.warning(f"Price changed (code {result.retcode}), retrying...")
-                if attempt < CONFIG['max_retries'] - 1:
-                    time.sleep(CONFIG['retry_delay'])
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
                     continue
             
             elif result.retcode == mt5.TRADE_RETCODE_INVALID_FILL:
@@ -384,8 +392,8 @@ def place_market_order(symbol, side, volume, sl, tp):
                 elif filling_type == mt5.ORDER_FILLING_IOC:
                     filling_type = mt5.ORDER_FILLING_RETURN
                 
-                if attempt < CONFIG['max_retries'] - 1:
-                    time.sleep(CONFIG['retry_delay'])
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
                     continue
             
             elif result.retcode == 10016:  # Invalid stops
@@ -401,21 +409,21 @@ def place_market_order(symbol, side, volume, sl, tp):
                 error_msg = f"Order failed: {result.retcode} - {result.comment}"
                 logger.error(error_msg)
                 
-                if attempt < CONFIG['max_retries'] - 1:
-                    time.sleep(CONFIG['retry_delay'])
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
                     continue
                 else:
                     raise RuntimeError(error_msg)
         
         except Exception as e:
             logger.error(f"Exception during order placement: {e}")
-            if attempt < CONFIG['max_retries'] - 1:
-                time.sleep(CONFIG['retry_delay'])
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay)
                 continue
             else:
                 raise
     
-    raise RuntimeError(f"Order failed after {CONFIG['max_retries']} attempts")
+    raise RuntimeError(f"Order failed after {max_retries} attempts")
 
 # --------------------------- POSITION MANAGEMENT ----------------------------
 
@@ -504,7 +512,7 @@ def close_position(ticket, symbol, volume=None):
             'type': order_type,
             'position': ticket,
             'price': price,
-            'deviation': CONFIG['slippage_points'],
+            'deviation': CONFIG.get('slippage_points', 50),
             'magic': 234000,
             'comment': 'Close by bot',
             'type_time': mt5.ORDER_TIME_GTC,

@@ -80,7 +80,7 @@ CONFIG = {
     'trend_bearish_threshold': -10,
     
     # Fibonacci Settings
-    'fib_lookback': 30,
+    'fib_lookback': 100,
     'min_fib_candles': 5,
     'fib_levels': [0.618, 0.705, 0.786],
     'fib_tolerance': 0.0001,
