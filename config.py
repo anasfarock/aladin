@@ -42,7 +42,7 @@ CONFIG = {
     'trend_timeframes': ['D1', 'H4', 'H1'],
     
     # ===== ADX SPECIFIC TIMEFRAMES =====
-    'adx_timeframes': ['M15', 'H1', 'H4'],  # Independent ADX timeframe configuration
+    'adx_timeframes': ['H1', 'H4'],  # Independent ADX timeframe configuration
     
     # Technical Indicators
     'boll_period': 20,
@@ -55,14 +55,14 @@ CONFIG = {
     # ===== ADX SETTINGS =====
     'adx_period': 20,                          # ADX calculation period
     'use_adx_filter': True,                    # Enable/disable ADX filter
-    'adx_strength_threshold': 30,              # Minimum ADX value to confirm strong trend
+    'adx_strength_threshold': 25,              # Minimum ADX value to confirm strong trend
     'adx_extreme_threshold': 80,               # ADX value indicating very strong trend
     'adx_weak_threshold': 20,                  # ADX value below which trend is weak
     'adx_confirmation_bars': 2,                # Number of bars ADX must stay above threshold
     
     # ===== ADX MANUAL CONTROL =====
     'adx_manual_control': True,                # Allow ADX to confirm trends across different timeframes
-    'adx_manual_control_strict': False,        # When True: requires exact timeframe match
+    'adx_manual_control_strict': True,        # When True: requires exact timeframe match
                                                # When False: allows cross-timeframe confirmation
     
     # Manual Trend Override
