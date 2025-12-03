@@ -32,8 +32,8 @@ CONFIG = {
     # Trading Parameters
     'symbol': 'USDCAD',
     'backtest': False,
-    'start': '2024-11-13',
-    'end': '2025-11-16',
+    'start': '2025-11-13',
+    'end': '2025-11-30',
     'capital': 5000.0,
     'risk_pct': 0.5,
     
@@ -42,7 +42,7 @@ CONFIG = {
     'trend_timeframes': ['D1', 'H4', 'H1'],
     
     # ===== ADX SPECIFIC TIMEFRAMES =====
-    'adx_timeframes': ['H1', 'H4'],  # Independent ADX timeframe configuration
+    'adx_timeframes': ['M5', 'H4'],  # Independent ADX timeframe configuration
     
     # Technical Indicators
     'boll_period': 20,
