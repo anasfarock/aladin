@@ -1,9 +1,11 @@
 """
-Risk Management Module - Enhanced with ATR-Based Stop Loss
-Handles trailing stops, position monitoring, risk calculations, and ATR stops
+Risk Management Module - Enhanced with Daily Loss Limits
+Handles trailing stops, position monitoring, risk calculations, ATR stops, and daily loss tracking
 """
 
 import logging
+from datetime import datetime, date
+from collections import defaultdict
 from config import CONFIG, MT5_AVAILABLE, mt5
 
 if MT5_AVAILABLE:
@@ -11,7 +13,226 @@ if MT5_AVAILABLE:
 
 logger = logging.getLogger(__name__)
 
-# --------------------------- ATR-BASED STOP LOSS ----------------------------
+# ========================== DAILY LOSS TRACKING ==========================
+
+class DailyLossTracker:
+    """
+    Tracks daily losses globally and per-symbol to enforce daily loss limits
+    Resets at midnight (configurable)
+    """
+    
+    def __init__(self):
+        self.daily_losses = defaultdict(float)  # 'global' -> total losses, 'EURUSD' -> pair-specific losses
+        self.loss_count = defaultdict(int)      # Count of losing trades
+        self.last_reset_date = date.today()
+        self.closed_trades = defaultdict(list)  # Track closed trades for auditing
+    
+    def _check_and_reset_if_needed(self):
+        """Check if it's a new day and reset counters"""
+        current_date = date.today()
+        if current_date != self.last_reset_date:
+            self._reset_daily_counters(current_date)
+    
+    def _reset_daily_counters(self, current_date):
+        """Reset daily loss tracking"""
+        if self.daily_losses or self.loss_count:
+            logger.info(f"Daily loss counters reset. Previous day summary:")
+            logger.info(f"  Global losses: {self.daily_losses.get('global', 0):.2f}")
+            logger.info(f"  Global loss count: {self.loss_count.get('global', 0)}")
+            logger.info(f"  Per-symbol losses: {dict(self.daily_losses)}")
+            logger.info(f"  Per-symbol loss counts: {dict(self.loss_count)}")
+        
+        self.daily_losses.clear()
+        self.loss_count.clear()
+        self.closed_trades.clear()
+        self.last_reset_date = current_date
+        logger.info(f"Daily loss counters reset for {current_date}")
+    
+    def record_loss(self, symbol, loss_amount):
+        """
+        Record a losing trade
+        
+        Args:
+            symbol: Trading pair (e.g., 'EURUSD')
+            loss_amount: Loss amount (positive value)
+        """
+        self._check_and_reset_if_needed()
+        
+        if loss_amount <= 0:
+            logger.warning(f"Invalid loss amount: {loss_amount}. Skipping record.")
+            return
+        
+        # Update global losses
+        self.daily_losses['global'] += loss_amount
+        self.loss_count['global'] += 1
+        
+        # Update symbol-specific losses
+        self.daily_losses[symbol] += loss_amount
+        self.loss_count[symbol] += 1
+        
+        # Track for auditing
+        self.closed_trades['global'].append({
+            'timestamp': datetime.now(),
+            'symbol': symbol,
+            'loss': loss_amount,
+            'type': 'loss'
+        })
+        self.closed_trades[symbol].append({
+            'timestamp': datetime.now(),
+            'loss': loss_amount,
+            'type': 'loss'
+        })
+        
+        logger.info(f"Loss recorded: {symbol} -{loss_amount:.2f} | "
+                   f"Daily: {self.daily_losses['global']:.2f} ({self.loss_count['global']} trades) | "
+                   f"{symbol}: {self.daily_losses[symbol]:.2f} ({self.loss_count[symbol]} trades)")
+    
+    def can_trade(self, symbol):
+        """
+        Check if trading is allowed based on daily loss limits
+        
+        Returns:
+            tuple: (is_allowed, reason)
+        """
+        self._check_and_reset_if_needed()
+        
+        max_daily_losses = CONFIG.get('max_daily_losses', -1)
+        max_daily_losses_per_symbol = CONFIG.get('max_daily_losses_per_symbol', -1)
+        
+        # -1 means unlimited
+        if max_daily_losses == -1 and max_daily_losses_per_symbol == -1:
+            return True, "No daily loss limits configured"
+        
+        # Check global daily loss limit
+        if max_daily_losses > 0:
+            current_daily_losses = self.daily_losses.get('global', 0)
+            if current_daily_losses >= max_daily_losses:
+                return False, (f"Global daily loss limit reached: "
+                             f"{current_daily_losses:.2f}/{max_daily_losses:.2f}")
+        
+        # Check global daily loss count limit
+        max_daily_loss_count = CONFIG.get('max_daily_loss_count', -1)
+        if max_daily_loss_count > 0:
+            current_loss_count = self.loss_count.get('global', 0)
+            if current_loss_count >= max_daily_loss_count:
+                return False, (f"Global daily loss count limit reached: "
+                             f"{current_loss_count}/{max_daily_loss_count} losses")
+        
+        # Check per-symbol daily loss limit
+        if max_daily_losses_per_symbol > 0:
+            symbol_daily_losses = self.daily_losses.get(symbol, 0)
+            if symbol_daily_losses >= max_daily_losses_per_symbol:
+                return False, (f"Daily loss limit for {symbol} reached: "
+                             f"{symbol_daily_losses:.2f}/{max_daily_losses_per_symbol:.2f}")
+        
+        # Check per-symbol daily loss count limit
+        max_daily_loss_count_per_symbol = CONFIG.get('max_daily_loss_count_per_symbol', -1)
+        if max_daily_loss_count_per_symbol > 0:
+            symbol_loss_count = self.loss_count.get(symbol, 0)
+            if symbol_loss_count >= max_daily_loss_count_per_symbol:
+                return False, (f"Daily loss count limit for {symbol} reached: "
+                             f"{symbol_loss_count}/{max_daily_loss_count_per_symbol} losses")
+        
+        return True, "Trading allowed"
+    
+    def get_daily_summary(self):
+        """
+        Get current day's loss summary
+        
+        Returns:
+            dict with global and per-symbol stats
+        """
+        self._check_and_reset_if_needed()
+        
+        summary = {
+            'date': str(self.last_reset_date),
+            'global': {
+                'total_losses': self.daily_losses.get('global', 0),
+                'loss_count': self.loss_count.get('global', 0),
+                'max_allowed': CONFIG.get('max_daily_losses', -1),
+                'max_allowed_count': CONFIG.get('max_daily_loss_count', -1),
+            },
+            'per_symbol': {}
+        }
+        
+        for symbol in self.daily_losses:
+            if symbol != 'global':
+                summary['per_symbol'][symbol] = {
+                    'total_losses': self.daily_losses[symbol],
+                    'loss_count': self.loss_count[symbol],
+                    'max_allowed': CONFIG.get('max_daily_losses_per_symbol', -1),
+                    'max_allowed_count': CONFIG.get('max_daily_loss_count_per_symbol', -1),
+                }
+        
+        return summary
+    
+    def log_daily_summary(self):
+        """Log the current day's summary"""
+        summary = self.get_daily_summary()
+        logger.info("="*70)
+        logger.info("DAILY LOSS SUMMARY")
+        logger.info(f"Date: {summary['date']}")
+        logger.info("-"*70)
+        
+        global_stats = summary['global']
+        logger.info(f"Global:")
+        logger.info(f"  Total Losses: {global_stats['total_losses']:.2f}")
+        logger.info(f"  Loss Count: {global_stats['loss_count']}")
+        if global_stats['max_allowed'] > 0:
+            logger.info(f"  Max Daily Losses: {global_stats['max_allowed']:.2f}")
+        if global_stats['max_allowed_count'] > 0:
+            logger.info(f"  Max Daily Loss Count: {global_stats['max_allowed_count']}")
+        
+        if summary['per_symbol']:
+            logger.info("-"*70)
+            logger.info("Per-Symbol:")
+            for symbol, stats in summary['per_symbol'].items():
+                logger.info(f"  {symbol}:")
+                logger.info(f"    Total Losses: {stats['total_losses']:.2f}")
+                logger.info(f"    Loss Count: {stats['loss_count']}")
+        
+        logger.info("="*70)
+
+
+# Global instance
+daily_loss_tracker = DailyLossTracker()
+
+
+def check_daily_loss_limit(symbol):
+    """
+    Check if trading is allowed based on daily loss limits
+    
+    Args:
+        symbol: Trading pair
+    
+    Returns:
+        tuple: (is_allowed, reason)
+    """
+    return daily_loss_tracker.can_trade(symbol)
+
+
+def record_trade_loss(symbol, loss_amount):
+    """
+    Record a losing trade
+    
+    Args:
+        symbol: Trading pair
+        loss_amount: Loss amount (positive value)
+    """
+    daily_loss_tracker.record_loss(symbol, loss_amount)
+
+
+def get_daily_loss_summary():
+    """Get current day's loss summary"""
+    return daily_loss_tracker.get_daily_summary()
+
+
+def log_daily_loss_summary():
+    """Log the current day's summary"""
+    daily_loss_tracker.log_daily_summary()
+
+
+# ========================== ATR-BASED STOP LOSS ==========================
 
 def calculate_atr_stop_loss(df, entry_price, side, atr_multiplier=None):
     """
@@ -73,6 +294,7 @@ def calculate_atr_stop_loss(df, entry_price, side, atr_multiplier=None):
         logger.debug(f"Error calculating ATR stop loss: {e}")
         return None
 
+
 def compare_stop_loss_methods(df, entry_price, side, fib_stop_price):
     """
     Compare ATR-based stop loss with Fibonacci stop loss
@@ -115,14 +337,13 @@ def compare_stop_loss_methods(df, entry_price, side, fib_stop_price):
         }
     
     atr_stop = atr_result['stop_price']
-    method_preference = CONFIG.get('atr_stop_method', 'wider')  # 'wider', 'tighter', or 'fibonacci'
+    method_preference = CONFIG.get('atr_stop_method', 'wider')
     
     try:
         if side == 'long':
             atr_distance = entry_price - atr_stop
             fib_distance = entry_price - fib_stop_price
             
-            # Validate distances are positive
             if atr_distance <= 0 or fib_distance <= 0:
                 return {
                     'stop_price': fib_stop_price,
@@ -133,7 +354,6 @@ def compare_stop_loss_methods(df, entry_price, side, fib_stop_price):
                 }
             
             if method_preference == 'wider':
-                # Use the stop that gives more room (less risk)
                 if atr_stop < fib_stop_price:
                     selected_stop = atr_stop
                     selected_method = 'ATR'
@@ -144,7 +364,6 @@ def compare_stop_loss_methods(df, entry_price, side, fib_stop_price):
                     reason = f"Fibonacci stop is wider: {fib_distance:.5f} vs {atr_distance:.5f}"
             
             elif method_preference == 'tighter':
-                # Use the stop that's closer (more risk, tighter SL)
                 if atr_stop > fib_stop_price:
                     selected_stop = atr_stop
                     selected_method = 'ATR'
@@ -154,7 +373,7 @@ def compare_stop_loss_methods(df, entry_price, side, fib_stop_price):
                     selected_method = 'Fibonacci'
                     reason = f"Fibonacci stop is tighter: {fib_distance:.5f} vs {atr_distance:.5f}"
             
-            else:  # 'fibonacci'
+            else:
                 selected_stop = fib_stop_price
                 selected_method = 'Fibonacci'
                 reason = "Using Fibonacci stop (preference)"
@@ -163,7 +382,6 @@ def compare_stop_loss_methods(df, entry_price, side, fib_stop_price):
             atr_distance = atr_stop - entry_price
             fib_distance = fib_stop_price - entry_price
             
-            # Validate distances are positive
             if atr_distance <= 0 or fib_distance <= 0:
                 return {
                     'stop_price': fib_stop_price,
@@ -193,7 +411,7 @@ def compare_stop_loss_methods(df, entry_price, side, fib_stop_price):
                     selected_method = 'Fibonacci'
                     reason = f"Fibonacci stop is tighter: {fib_distance:.5f} vs {atr_distance:.5f}"
             
-            else:  # 'fibonacci'
+            else:
                 selected_stop = fib_stop_price
                 selected_method = 'Fibonacci'
                 reason = "Using Fibonacci stop (preference)"
@@ -217,7 +435,8 @@ def compare_stop_loss_methods(df, entry_price, side, fib_stop_price):
             'reason': f'Error in comparison: {str(e)}'
         }
 
-# --------------------------- TRAILING STOPS ----------------------------
+
+# ========================== TRAILING STOPS ==========================
 
 def update_trailing_stop(position, current_price):
     """
@@ -281,11 +500,10 @@ def update_trailing_stop(position, current_price):
     
     return position
 
+
 def monitor_live_positions(symbol):
     """
     Monitor and update trailing stops for live positions
-    
-    This function checks all open positions and applies trailing stop logic
     """
     if not CONFIG['trailing_stop'] or not MT5_AVAILABLE:
         return
@@ -297,7 +515,6 @@ def monitor_live_positions(symbol):
             return
         
         for position in positions:
-            # Only manage our bot's positions
             if position.magic != 234000:
                 continue
             
@@ -306,7 +523,6 @@ def monitor_live_positions(symbol):
             current_sl = position.sl
             position_type = position.type
             
-            # Get current price
             tick = mt5.symbol_info_tick(symbol)
             if not tick:
                 continue
@@ -314,7 +530,6 @@ def monitor_live_positions(symbol):
             current_price = tick.bid if position_type == mt5.POSITION_TYPE_BUY else tick.ask
             is_long = position_type == mt5.POSITION_TYPE_BUY
             
-            # Calculate profit and risk
             if is_long:
                 profit_points = current_price - entry_price
                 original_risk = entry_price - current_sl
@@ -327,7 +542,6 @@ def monitor_live_positions(symbol):
             
             profit_ratio = profit_points / original_risk
             
-            # Find applicable trailing level
             new_sl = None
             for level, trail_ratio in sorted(CONFIG['trailing_levels'].items(), reverse=True):
                 if profit_ratio >= level:
@@ -341,13 +555,15 @@ def monitor_live_positions(symbol):
                             new_sl = calculated_sl
                     break
             
-            # Update if new stop is better
             if new_sl is not None:
                 logger.info(f"Updating trailing stop for position {ticket}: {current_sl:.5f} -> {new_sl:.5f}")
                 update_position_sl_tp(ticket, symbol, new_sl, position.tp)
     
     except Exception as e:
         logger.error(f"Error monitoring positions: {e}")
+
+
+# ========================== POSITION SIZING & VALIDATION ==========================
 
 def calculate_position_size(symbol, entry_price, stop_price, account_balance):
     """
@@ -362,6 +578,7 @@ def calculate_position_size(symbol, entry_price, stop_price, account_balance):
     volume = calc_volume(symbol, entry_price, stop_price, risk_amount)
     
     return volume, risk_amount
+
 
 def validate_trade_setup(entry_price, stop_price, tp_price, side):
     """
@@ -403,6 +620,9 @@ def validate_trade_setup(entry_price, stop_price, tp_price, side):
     
     return True, None
 
+
+# ========================== POSITION LIMITS ==========================
+
 def check_max_positions_reached(symbol):
     """
     Check if maximum number of concurrent positions is reached (global limit)
@@ -415,10 +635,10 @@ def check_max_positions_reached(symbol):
     
     positions = get_open_positions(symbol=symbol)
     
-    # Count only our bot's positions (regardless of symbol)
     our_positions = [p for p in positions if p.magic == 234000]
     
     return len(our_positions) >= CONFIG['max_concurrent_trades']
+
 
 def check_max_positions_reached_for_symbol(symbol):
     """
@@ -433,7 +653,6 @@ def check_max_positions_reached_for_symbol(symbol):
     try:
         positions = get_open_positions(symbol=symbol)
         
-        # Count only our bot's positions for this specific symbol
         our_positions = [p for p in positions if p.magic == 234000 and p.symbol == symbol]
         
         current_count = len(our_positions)

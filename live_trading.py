@@ -21,7 +21,10 @@ from risk_management import (
     validate_trade_setup,
     check_max_positions_reached,
     check_max_positions_reached_for_symbol,
-    compare_stop_loss_methods
+    compare_stop_loss_methods,
+    check_daily_loss_limit,
+    record_trade_loss,
+    log_daily_loss_summary
 )
 
 # Import fundamental & sentiment analysis
@@ -51,6 +54,10 @@ if MT5_AVAILABLE:
 
 # Global Fibonacci tracker
 fib_tracker = FibonacciTracker()
+
+# --- Daily Loss Tracking Globals ---
+processed_deals = set() # Keep track of deals we've already recorded
+# -----------------------------------
 
 # Macro analysis cache
 macro_analysis_cache = {'timestamp': None, 'data': None, 'symbol': None}
@@ -200,6 +207,52 @@ def _check_adx_filter(adx_dataframes_dict, trend):
         'adx_analysis': adx_analysis
     }
 
+def _monitor_closed_trades(symbol):
+    """
+    Monitor and record losses from closed positions.
+    Called at each cycle to track new closed trades.
+    """
+    if not MT5_AVAILABLE:
+        return
+
+    try:
+        import MetaTrader5 as mt5
+        from datetime import datetime, timedelta
+
+        # Fetch deals from the last 24 hours to be safe
+        from_date = datetime.now() - timedelta(days=1)
+        deals = mt5.history_deals_get(from_date, datetime.now())
+
+        if deals is None:
+            logger.debug("No deals found in history.")
+            return
+
+        deals_to_process = [d for d in deals if d.ticket not in processed_deals]
+
+        if not deals_to_process:
+            return
+
+        logger.debug(f"Found {len(deals_to_process)} new deals to process for loss recording.")
+
+        for deal in deals_to_process:
+            # Mark deal as processed immediately
+            processed_deals.add(deal.ticket)
+
+            # Filter for our bot's trades
+            if deal.magic != 234000:
+                continue
+
+            # A closing deal has entry type 'DEAL_ENTRY_OUT'
+            # We only care about losses
+            if deal.entry == mt5.DEAL_ENTRY_OUT and deal.profit < 0:
+                loss_amount = abs(deal.profit)
+                logger.info(f"Closed position detected (Deal #{deal.ticket}): Recording loss of {loss_amount:.2f} for {deal.symbol}")
+                record_trade_loss(deal.symbol, loss_amount)
+
+    except Exception as e:
+        # Use debug level to avoid spamming logs if MT5 connection is temporarily down
+        logger.debug(f"Error monitoring closed trades: {e}")
+
 def live_run_once(symbol):
     """
     Execute one live trading cycle with ADX, ATR stops, and macro analysis
@@ -218,6 +271,15 @@ def live_run_once(symbol):
         logger.info(f"Max concurrent trades for {symbol} ({max_allowed}) reached. "
                    f"Current: {current_count}/{max_allowed}")
         return None
+    
+    # After checking per-symbol position limits, ADD:
+    can_trade, reason = check_daily_loss_limit(symbol)
+    if not can_trade:
+        logger.warning(f"⛔ Daily Loss Limit: {reason}")
+        logger.info("="*70)
+        return None
+    else:
+        logger.info(f"✓ Daily Loss Limit Check: {reason}")
     
     try:
         # Fetch live data for all timeframes
@@ -593,10 +655,17 @@ def start_live_trading(symbol=None):
             cycle_count += 1
             logger.info(f"\n--- Cycle {cycle_count} ---")
             
+            # ADD THIS LINE:
+            _monitor_closed_trades(symbol)
+            
             try:
                 live_run_once(symbol)
             except Exception as e:
                 logger.error(f"Error in trading cycle: {e}", exc_info=True)
+            
+            # At the start or end of each trading cycle:
+            if cycle_count % 24 == 0:  # Every 24 cycles (24 minutes if 60s interval)
+                log_daily_loss_summary()
             
             logger.debug(f"Waiting 60 seconds before next cycle...")
             time.sleep(60)

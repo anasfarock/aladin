@@ -80,7 +80,7 @@ CONFIG = {
     'trend_bearish_threshold': -10,
     
     # Fibonacci Settings
-    'fib_lookback': 60,
+    'fib_lookback': 43,
     'min_fib_candles': 5,
     'fib_levels': [0.618, 0.705, 0.786],
     'fib_tolerance': 0.0001,
@@ -138,6 +138,12 @@ CONFIG = {
     # Macro Bias Filtering
     'skip_trades_against_macro': False,
     'macro_bias_confidence_required': 60,
+
+    # ===== DAILY LOSS LIMITS =====
+    'max_daily_losses': -1,                         # Max daily loss in account currency (-1 = unlimited)
+    'max_daily_loss_count': 8,                      # Max losing trades per day (-1 = unlimited)
+    'max_daily_losses_per_symbol': -1,              # Max daily loss per symbol (-1 = unlimited)
+    'max_daily_loss_count_per_symbol': 3,           # Max losing trades per symbol per day (-1 = unlimited)
     
     # Risk Management
     'max_concurrent_trades': 8,                    # Max total concurrent trades across all pairs

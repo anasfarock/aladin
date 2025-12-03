@@ -67,6 +67,15 @@ Examples:
   # Run with ADX and macro analysis
   python main.py --live --adx --fundamental-only
   
+  # Run with daily loss limits
+  python main.py --live --max-daily-losses 500 --max-daily-loss-count 5
+  
+  # Run with per-symbol daily loss limits
+  python main.py --live --max-daily-losses-per-symbol 200 --max-daily-loss-count-per-symbol 2
+  
+  # Run with unlimited losses (careful!)
+  python main.py --live --max-daily-losses -1 --max-daily-loss-count -1
+  
   # Run backtest with custom dates
   python main.py --backtest --start 2024-01-01 --end 2024-12-31
         """
@@ -251,6 +260,21 @@ Examples:
         help='Enable verbose macro analysis logging'
     )
     
+    # Daily Loss Limit Options
+    loss_limit_group = parser.add_argument_group('Daily Loss Limit Options')
+    
+    loss_limit_group.add_argument(
+        '--max-daily-losses', type=float, help=f'Max daily loss in account currency (default: {CONFIG["max_daily_losses"]}). -1 = unlimited')
+    
+    loss_limit_group.add_argument(
+        '--max-daily-loss-count', type=int, help=f'Max losing trades per day (default: {CONFIG["max_daily_loss_count"]}). -1 = unlimited')
+    
+    loss_limit_group.add_argument(
+        '--max-daily-losses-per-symbol', type=float, help=f'Max daily loss per symbol (default: {CONFIG["max_daily_losses_per_symbol"]}). -1 = unlimited')
+    
+    loss_limit_group.add_argument(
+        '--max-daily-loss-count-per-symbol', type=int, help=f'Max losing trades per symbol per day (default: {CONFIG["max_daily_loss_count_per_symbol"]}). -1 = unlimited')
+    
     return parser.parse_args()
 
 def update_config_from_args(args):
@@ -372,6 +396,25 @@ def update_config_from_args(args):
         CONFIG['verbose_macro_analysis'] = True
         logger.info("🔊 Verbose macro logging: ENABLED")
 
+    # Daily Loss Limit Options
+    if args.max_daily_losses is not None:
+        CONFIG['max_daily_losses'] = args.max_daily_losses
+        logger.info(f"Max daily losses set to: {args.max_daily_losses}")
+    
+    if args.max_daily_loss_count is not None:
+        CONFIG['max_daily_loss_count'] = args.max_daily_loss_count
+        logger.info(f"Max daily loss count set to: {args.max_daily_loss_count}")
+    
+    if args.max_daily_losses_per_symbol is not None:
+        CONFIG['max_daily_losses_per_symbol'] = args.max_daily_losses_per_symbol
+        logger.info(f"Max daily losses per symbol set to: {args.max_daily_losses_per_symbol}")
+    
+    if args.max_daily_loss_count_per_symbol is not None:
+        CONFIG['max_daily_loss_count_per_symbol'] = args.max_daily_loss_count_per_symbol
+        logger.info(f"Max daily loss count per symbol set to: {args.max_daily_loss_count_per_symbol}")
+    
+
+
 def main():
     """Main function"""
     print("\n" + "="*70)
@@ -463,6 +506,29 @@ def main():
     print(f"Min R:R Ratio: {CONFIG['min_rr_ratio']}")
     print(f"Max Concurrent Trades: {CONFIG['max_concurrent_trades']}")
     print(f"{'='*70}\n")
+
+    # Add to the configuration summary display:
+    
+    print("\n📊 DAILY LOSS LIMITS:")
+    if CONFIG['max_daily_losses'] > 0:
+        print(f"   Max Daily Loss: ${CONFIG['max_daily_losses']:.2f}")
+    else:
+        print(f"   Max Daily Loss: UNLIMITED")
+    
+    if CONFIG['max_daily_loss_count'] > 0:
+        print(f"   Max Daily Loss Count: {CONFIG['max_daily_loss_count']} trades")
+    else:
+        print(f"   Max Daily Loss Count: UNLIMITED")
+    
+    if CONFIG['max_daily_losses_per_symbol'] > 0:
+        print(f"   Max Daily Loss Per Symbol: ${CONFIG['max_daily_losses_per_symbol']:.2f}")
+    else:
+        print(f"   Max Daily Loss Per Symbol: UNLIMITED")
+    
+    if CONFIG['max_daily_loss_count_per_symbol'] > 0:
+        print(f"   Max Daily Loss Per Symbol Count: {CONFIG['max_daily_loss_count_per_symbol']} trades")
+    else:
+        print(f"   Max Daily Loss Per Symbol Count: UNLIMITED")
     
     try:
         if CONFIG['backtest']:
