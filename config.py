@@ -80,7 +80,7 @@ CONFIG = {
     'trend_bearish_threshold': -10,
     
     # Fibonacci Settings
-    'fib_lookback': 43,
+    'fib_lookback': 57,
     'min_fib_candles': 5,
     'fib_levels': [0.618, 0.705, 0.786],
     'fib_tolerance': 0.0001,
@@ -161,7 +161,7 @@ CONFIG = {
     # ===== ATR-BASED STOP LOSS SETTINGS =====
     'use_atr_stops': True,                         # Enable/disable ATR-based stop loss
     'atr_stop_multiplier': 1.5,                    # Multiplier for ATR (e.g., 2.0 = 2x ATR)
-    'atr_stop_method': 'tighter',                  # 'wider', 'tighter', or 'fibonacci'
+    'atr_stop_method': 'wider',                    # 'wider', 'tighter', or 'fibonacci'
                                                    # wider: Use whichever stop gives more room
                                                    # tighter: Use whichever stop is closer
                                                    # fibonacci: Always use Fibonacci stops
