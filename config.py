@@ -423,6 +423,27 @@ def validate_config():
     logger.info(f"  Max setup age: {CONFIG['max_fib_age']} bars")
     logger.info(f"  Fibonacci levels: {CONFIG['fib_levels']}")
     
+    # Validate and log daily loss limits
+    logger.info("="*70)
+    logger.info("🛡️  DAILY LOSS LIMITS")
+    
+    if CONFIG['max_daily_losses'] < -1 or CONFIG['max_daily_losses'] == 0:
+        raise ValueError("max_daily_losses must be a positive value or -1 for unlimited.")
+    logger.info(f"  Max Daily Loss (Account): {CONFIG['max_daily_losses'] if CONFIG['max_daily_losses'] != -1 else 'Unlimited'}")
+
+    if CONFIG['max_daily_loss_count'] < -1 or CONFIG['max_daily_loss_count'] == 0:
+        raise ValueError("max_daily_loss_count must be a positive integer or -1 for unlimited.")
+    logger.info(f"  Max Daily Losing Trades (Account): {CONFIG['max_daily_loss_count'] if CONFIG['max_daily_loss_count'] != -1 else 'Unlimited'}")
+
+    if CONFIG['max_daily_losses_per_symbol'] < -1 or CONFIG['max_daily_losses_per_symbol'] == 0:
+        raise ValueError("max_daily_losses_per_symbol must be a positive value or -1 for unlimited.")
+    logger.info(f"  Max Daily Loss (Per Symbol): {CONFIG['max_daily_losses_per_symbol'] if CONFIG['max_daily_losses_per_symbol'] != -1 else 'Unlimited'}")
+
+    if CONFIG['max_daily_loss_count_per_symbol'] < -1 or CONFIG['max_daily_loss_count_per_symbol'] == 0:
+        raise ValueError("max_daily_loss_count_per_symbol must be a positive integer or -1 for unlimited.")
+    logger.info(f"  Max Daily Losing Trades (Per Symbol): {CONFIG['max_daily_loss_count_per_symbol'] if CONFIG['max_daily_loss_count_per_symbol'] != -1 else 'Unlimited'}")
+    logger.info("="*70)
+
     # Log risk management configuration
     logger.info(f"Risk Management Settings:")
     logger.info(f"  Max concurrent trades (total): {CONFIG['max_concurrent_trades']}")
