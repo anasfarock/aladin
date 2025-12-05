@@ -4,6 +4,7 @@ Handles trailing stops, position monitoring, risk calculations, ATR stops, and d
 """
 
 import logging
+import pandas as pd
 from datetime import datetime, date
 from collections import defaultdict
 from config import CONFIG, MT5_AVAILABLE, mt5
@@ -97,41 +98,45 @@ class DailyLossTracker:
         self._check_and_reset_if_needed()
         
         max_daily_losses = CONFIG.get('max_daily_losses', -1)
+        max_daily_loss_count = CONFIG.get('max_daily_loss_count', -1)
         max_daily_losses_per_symbol = CONFIG.get('max_daily_losses_per_symbol', -1)
+        max_daily_loss_count_per_symbol = CONFIG.get('max_daily_loss_count_per_symbol', -1)
+        
+        current_daily_losses = self.daily_losses.get('global', 0)
+        current_loss_count = self.loss_count.get('global', 0)
+        symbol_daily_losses = self.daily_losses.get(symbol, 0)
+        symbol_loss_count = self.loss_count.get(symbol, 0)
+
+        logger.debug(f"Daily Loss Check for {symbol}: "
+                    f"Global Loss: {current_daily_losses:.2f}/{max_daily_losses}, "
+                    f"Global Count: {current_loss_count}/{max_daily_loss_count}, "
+                    f"Symbol Loss: {symbol_daily_losses:.2f}/{max_daily_losses_per_symbol}, "
+                    f"Symbol Count: {symbol_loss_count}/{max_daily_loss_count_per_symbol}")
         
         # -1 means unlimited
-        if max_daily_losses == -1 and max_daily_losses_per_symbol == -1:
+        if (max_daily_losses == -1 and max_daily_losses_per_symbol == -1 and
+            max_daily_loss_count == -1 and max_daily_loss_count_per_symbol == -1):
             return True, "No daily loss limits configured"
         
         # Check global daily loss limit
-        if max_daily_losses > 0:
-            current_daily_losses = self.daily_losses.get('global', 0)
-            if current_daily_losses >= max_daily_losses:
-                return False, (f"Global daily loss limit reached: "
-                             f"{current_daily_losses:.2f}/{max_daily_losses:.2f}")
+        if max_daily_losses != -1 and current_daily_losses >= max_daily_losses:
+            return False, (f"Global daily loss limit reached: "
+                         f"{current_daily_losses:.2f}/{max_daily_losses:.2f}")
         
         # Check global daily loss count limit
-        max_daily_loss_count = CONFIG.get('max_daily_loss_count', -1)
-        if max_daily_loss_count > 0:
-            current_loss_count = self.loss_count.get('global', 0)
-            if current_loss_count >= max_daily_loss_count:
-                return False, (f"Global daily loss count limit reached: "
-                             f"{current_loss_count}/{max_daily_loss_count} losses")
+        if max_daily_loss_count != -1 and current_loss_count >= max_daily_loss_count:
+            return False, (f"Global daily loss count limit reached: "
+                         f"{current_loss_count}/{max_daily_loss_count} losses")
         
         # Check per-symbol daily loss limit
-        if max_daily_losses_per_symbol > 0:
-            symbol_daily_losses = self.daily_losses.get(symbol, 0)
-            if symbol_daily_losses >= max_daily_losses_per_symbol:
-                return False, (f"Daily loss limit for {symbol} reached: "
-                             f"{symbol_daily_losses:.2f}/{max_daily_losses_per_symbol:.2f}")
+        if max_daily_losses_per_symbol != -1 and symbol_daily_losses >= max_daily_losses_per_symbol:
+            return False, (f"Daily loss limit for {symbol} reached: "
+                         f"{symbol_daily_losses:.2f}/{max_daily_losses_per_symbol:.2f}")
         
         # Check per-symbol daily loss count limit
-        max_daily_loss_count_per_symbol = CONFIG.get('max_daily_loss_count_per_symbol', -1)
-        if max_daily_loss_count_per_symbol > 0:
-            symbol_loss_count = self.loss_count.get(symbol, 0)
-            if symbol_loss_count >= max_daily_loss_count_per_symbol:
-                return False, (f"Daily loss count limit for {symbol} reached: "
-                             f"{symbol_loss_count}/{max_daily_loss_count_per_symbol} losses")
+        if max_daily_loss_count_per_symbol != -1 and symbol_loss_count >= max_daily_loss_count_per_symbol:
+            return False, (f"Daily loss count limit for {symbol} reached: "
+                         f"{symbol_loss_count}/{max_daily_loss_count_per_symbol} losses")
         
         return True, "Trading allowed"
     
@@ -623,7 +628,7 @@ def validate_trade_setup(entry_price, stop_price, tp_price, side):
 
 # ========================== POSITION LIMITS ==========================
 
-def check_max_positions_reached(symbol):
+def check_max_positions_reached():
     """
     Check if maximum number of concurrent positions is reached (global limit)
     
@@ -633,7 +638,11 @@ def check_max_positions_reached(symbol):
     if not MT5_AVAILABLE:
         return False
     
-    positions = get_open_positions(symbol=symbol)
+    # Get all open positions across all symbols by calling with no arguments
+    positions = get_open_positions()
+    
+    if positions is None:
+        return False
     
     our_positions = [p for p in positions if p.magic == 234000]
     

@@ -261,7 +261,7 @@ def live_run_once(symbol):
     monitor_live_positions(symbol)
     
     # Check global max positions limit
-    if check_max_positions_reached(symbol):
+    if check_max_positions_reached():
         logger.info(f"Max concurrent trades ({CONFIG['max_concurrent_trades']}) reached (global limit)")
         return None
     
