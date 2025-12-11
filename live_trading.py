@@ -5,6 +5,7 @@ Shows ADX strength validation and ATR stop comparison before executing trades
 
 import time
 import logging
+from datetime import datetime  # <-- ADD THIS LINE
 from config import CONFIG, MT5_AVAILABLE, logger
 from indicators import compute_indicators
 from fibonacci import FibonacciTracker, check_fibonacci_entry
@@ -256,30 +257,34 @@ def _monitor_closed_trades(symbol):
 def live_run_once(symbol):
     """
     Execute one live trading cycle with ADX, ATR stops, and macro analysis
+    FIXED: Proper order of checks - loss limits FIRST, then position limits
     """
-    # Monitor existing positions first
-    monitor_live_positions(symbol)
+    # ===== CHECK DAILY LOSS LIMITS FIRST =====
+    can_trade, loss_limit_reason = check_daily_loss_limit(symbol)
+    if not can_trade:
+        logger.warning(f"⛔ Daily Loss Limit: {loss_limit_reason}")
+        logger.info("="*70)
+        return None
+    else:
+        logger.info(f"✓ Daily Loss Limit Check: {loss_limit_reason}")
     
+    # ===== CHECK POSITION LIMITS =====
     # Check global max positions limit
     if check_max_positions_reached():
-        logger.info(f"Max concurrent trades ({CONFIG['max_concurrent_trades']}) reached (global limit)")
+        logger.info(f"⛔ Max concurrent trades ({CONFIG['max_concurrent_trades']}) reached (global limit)")
         return None
     
     # Check per-symbol max positions limit
     symbol_limit_reached, current_count, max_allowed = check_max_positions_reached_for_symbol(symbol)
     if symbol_limit_reached:
-        logger.info(f"Max concurrent trades for {symbol} ({max_allowed}) reached. "
+        logger.info(f"⛔ Max concurrent trades for {symbol} ({max_allowed}) reached. "
                    f"Current: {current_count}/{max_allowed}")
         return None
     
-    # After checking per-symbol position limits, ADD:
-    can_trade, reason = check_daily_loss_limit(symbol)
-    if not can_trade:
-        logger.warning(f"⛔ Daily Loss Limit: {reason}")
-        logger.info("="*70)
-        return None
-    else:
-        logger.info(f"✓ Daily Loss Limit Check: {reason}")
+    logger.info(f"✓ Position Limit: {current_count}/{max_allowed} on {symbol}")
+    
+    # Monitor existing positions
+    monitor_live_positions(symbol)
     
     try:
         # Fetch live data for all timeframes
@@ -327,9 +332,6 @@ def live_run_once(symbol):
             logger.info(f"Overall Trend: {trend.upper()}")
             logger.info(f"Confidence: {trend_confidence:.1f}%")
             logger.info(f"Total Points: {trend_details['total_points']:+.1f}")
-        
-        # Display per-symbol position limit status
-        logger.info(f"Position Limit: {current_count}/{max_allowed} trades on {symbol}")
         
         # ===== ADX FILTER CHECK =====
         adx_filter_result = _check_adx_filter(adx_dataframes, trend)
@@ -635,8 +637,32 @@ def start_live_trading(symbol=None):
             logger.warning("⚠️  Macro analysis requested but f_analysis not available")
     
     # Display position limits
-    logger.info(f"Max Concurrent Trades (Global): {CONFIG['max_concurrent_trades']}")
-    logger.info(f"Max Concurrent Trades (Per Symbol): {CONFIG['max_concurrent_trades_of_same_pair']}")
+    logger.info(f"\n🛡️  POSITION & LOSS LIMITS:")
+    logger.info(f"   Max Concurrent Trades (Global): {CONFIG['max_concurrent_trades']}")
+    logger.info(f"   Max Concurrent Trades (Per Symbol): {CONFIG['max_concurrent_trades_of_same_pair']}")
+    
+    # Display daily loss limits
+    logger.info(f"\n💸 DAILY LOSS LIMITS:")
+    if CONFIG['max_daily_losses'] > 0:
+        logger.info(f"   Max Daily Loss (Account): ${CONFIG['max_daily_losses']:.2f}")
+    else:
+        logger.info(f"   Max Daily Loss (Account): UNLIMITED")
+    
+    if CONFIG['max_daily_loss_count'] > 0:
+        logger.info(f"   Max Daily Losing Trades (Account): {CONFIG['max_daily_loss_count']} trades")
+    else:
+        logger.info(f"   Max Daily Losing Trades (Account): UNLIMITED")
+    
+    if CONFIG['max_daily_losses_per_symbol'] > 0:
+        logger.info(f"   Max Daily Loss (Per Symbol): ${CONFIG['max_daily_losses_per_symbol']:.2f}")
+    else:
+        logger.info(f"   Max Daily Loss (Per Symbol): UNLIMITED")
+    
+    if CONFIG['max_daily_loss_count_per_symbol'] > 0:
+        logger.info(f"   Max Daily Loss Count (Per Symbol): {CONFIG['max_daily_loss_count_per_symbol']} trades")
+    else:
+        logger.info(f"   Max Daily Loss Count (Per Symbol): UNLIMITED")
+    
     logger.info("="*60)
     
     try:
@@ -653,9 +679,10 @@ def start_live_trading(symbol=None):
         
         while True:
             cycle_count += 1
-            logger.info(f"\n--- Cycle {cycle_count} ---")
+            logger.info(f"\n--- Trading Cycle {cycle_count} ---")
+            logger.info(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
             
-            # ADD THIS LINE:
+            # Monitor closed trades BEFORE checking limits
             _monitor_closed_trades(symbol)
             
             try:
@@ -663,8 +690,8 @@ def start_live_trading(symbol=None):
             except Exception as e:
                 logger.error(f"Error in trading cycle: {e}", exc_info=True)
             
-            # At the start or end of each trading cycle:
-            if cycle_count % 24 == 0:  # Every 24 cycles (24 minutes if 60s interval)
+            # Log daily loss summary periodically
+            if cycle_count % 24 == 0:  # Every 24 cycles
                 log_daily_loss_summary()
             
             logger.debug(f"Waiting 60 seconds before next cycle...")
