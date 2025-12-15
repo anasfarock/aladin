@@ -1,6 +1,10 @@
 """
-Risk Management Module - Enhanced with Daily Loss Limits
+Risk Management Module - FIXED with Clear Limit Separation
 Handles trailing stops, position monitoring, risk calculations, ATR stops, and daily loss tracking
+
+KEY FIX: Clearly separated POSITION LIMITS from LOSS LIMITS
+- Position limits check OPEN TRADES RIGHT NOW
+- Loss limits check LOSING TRADES TODAY
 """
 
 import logging
@@ -20,13 +24,101 @@ class DailyLossTracker:
     """
     Tracks daily losses globally and per-symbol to enforce daily loss limits
     Resets at midnight (configurable)
+    
+    IMPORTANT: This tracks LOSING TRADES only, NOT position count
     """
     
     def __init__(self):
         self.daily_losses = defaultdict(float)  # 'global' -> total losses, 'EURUSD' -> pair-specific losses
-        self.loss_count = defaultdict(int)      # Count of losing trades
+        self.loss_count = defaultdict(int)      # Count of LOSING trades (not total trades)
         self.last_reset_date = date.today()
         self.closed_trades = defaultdict(list)  # Track closed trades for auditing
+    
+    def load_history_from_mt5(self):
+        """
+        Load today's closed trades from MT5 account history on startup
+        This ensures we track losses even if the bot restarted
+        """
+        if not MT5_AVAILABLE:
+            logger.debug("MT5 not available, skipping history load")
+            return
+        
+        try:
+            import MetaTrader5 as mt5
+            from datetime import datetime, timedelta
+            
+            logger.info("")
+            logger.info("="*70)
+            logger.info("📊 LOADING TODAY'S TRADE HISTORY FROM MT5")
+            logger.info("="*70)
+            
+            # Get today's date at midnight
+            today_start = datetime.combine(date.today(), datetime.min.time())
+            today_end = datetime.now()
+            
+            logger.debug(f"Fetching deals from {today_start} to {today_end}")
+            
+            # Fetch all deals for today
+            deals = mt5.history_deals_get(today_start, today_end)
+            
+            if deals is None:
+                logger.info("No trades found in MT5 history for today")
+                return
+            
+            if len(deals) == 0:
+                logger.info("No trades found in MT5 history for today")
+                return
+            
+            logger.debug(f"Found {len(deals)} total deals in history")
+            
+            # Process deals - only count closing deals that are losses
+            processed_count = 0
+            loss_count = 0
+            
+            for deal in deals:
+                # Only process our bot's trades (magic number 234000)
+                if deal.magic != 234000:
+                    continue
+                
+                processed_count += 1
+                
+                # Only process closing deals (exit from position)
+                if deal.entry != mt5.DEAL_ENTRY_OUT:
+                    continue
+                
+                # Only process losing trades
+                if deal.profit >= 0:
+                    continue
+                
+                # This is a loss
+                loss_count += 1
+                loss_amount = abs(deal.profit)
+                symbol = deal.symbol
+                
+                # Add to trackers
+                self.daily_losses['global'] += loss_amount
+                self.loss_count['global'] += 1
+                
+                self.daily_losses[symbol] += loss_amount
+                self.loss_count[symbol] += 1
+                
+                logger.debug(f"Loaded loss: {symbol} -${loss_amount:.2f}")
+            
+            logger.info("")
+            logger.info(f"✓ Loaded {processed_count} bot trades from history")
+            logger.info(f"✓ Found {loss_count} losing trades")
+            logger.info("")
+            logger.info("Current Daily Loss Status:")
+            logger.info(f"  Global losses: ${self.daily_losses['global']:.2f} ({self.loss_count['global']} trades)")
+            
+            for symbol in self.daily_losses:
+                if symbol != 'global':
+                    logger.info(f"  {symbol}: ${self.daily_losses[symbol]:.2f} ({self.loss_count[symbol]} trades)")
+            
+            logger.info("="*70)
+            
+        except Exception as e:
+            logger.warning(f"Error loading history from MT5: {e}")
     
     def _check_and_reset_if_needed(self):
         """Check if it's a new day and reset counters"""
@@ -37,11 +129,16 @@ class DailyLossTracker:
     def _reset_daily_counters(self, current_date):
         """Reset daily loss tracking"""
         if self.daily_losses or self.loss_count:
-            logger.info(f"Daily loss counters reset. Previous day summary:")
-            logger.info(f"  Global losses: {self.daily_losses.get('global', 0):.2f}")
-            logger.info(f"  Global loss count: {self.loss_count.get('global', 0)}")
-            logger.info(f"  Per-symbol losses: {dict(self.daily_losses)}")
-            logger.info(f"  Per-symbol loss counts: {dict(self.loss_count)}")
+            logger.info(f"")
+            logger.info(f"{'='*70}")
+            logger.info(f"📅 NEW DAY - RESETTING DAILY LOSS COUNTERS")
+            logger.info(f"Previous day summary:")
+            logger.info(f"  Global losses: ${self.daily_losses.get('global', 0):.2f}")
+            logger.info(f"  Global loss count: {self.loss_count.get('global', 0)} losing trades")
+            for symbol in self.daily_losses:
+                if symbol != 'global':
+                    logger.info(f"  {symbol}: ${self.daily_losses[symbol]:.2f} ({self.loss_count[symbol]} losing trades)")
+            logger.info(f"{'='*70}")
         
         self.daily_losses.clear()
         self.loss_count.clear()
@@ -51,11 +148,11 @@ class DailyLossTracker:
     
     def record_loss(self, symbol, loss_amount):
         """
-        Record a losing trade
+        Record a LOSING trade (only for trades that lost money)
         
         Args:
             symbol: Trading pair (e.g., 'EURUSD')
-            loss_amount: Loss amount (positive value)
+            loss_amount: Loss amount (positive value, e.g., 50.00 not -50.00)
         """
         self._check_and_reset_if_needed()
         
@@ -84,16 +181,24 @@ class DailyLossTracker:
             'type': 'loss'
         })
         
-        logger.info(f"Loss recorded: {symbol} -{loss_amount:.2f} | "
-                   f"Daily: {self.daily_losses['global']:.2f} ({self.loss_count['global']} trades) | "
-                   f"{symbol}: {self.daily_losses[symbol]:.2f} ({self.loss_count[symbol]} trades)")
+        logger.info(f"")
+        logger.info(f"{'='*70}")
+        logger.info(f"💔 LOSS RECORDED")
+        logger.info(f"  Symbol: {symbol}")
+        logger.info(f"  Loss Amount: ${loss_amount:.2f}")
+        logger.info(f"  Global Losses Today: ${self.daily_losses['global']:.2f} ({self.loss_count['global']} losses)")
+        logger.info(f"  {symbol} Losses Today: ${self.daily_losses[symbol]:.2f} ({self.loss_count[symbol]} losses)")
+        logger.info(f"{'='*70}")
     
     def can_trade(self, symbol):
         """
-        Check if trading is allowed based on daily loss limits
+        Check if trading is allowed based on daily LOSS limits
+        
+        This checks if we've hit our maximum losing trades for the day
+        NOT about position count!
         
         Returns:
-            tuple: (is_allowed, reason)
+            tuple: (is_allowed, reason_string)
         """
         self._check_and_reset_if_needed()
         
@@ -107,38 +212,36 @@ class DailyLossTracker:
         symbol_daily_losses = self.daily_losses.get(symbol, 0)
         symbol_loss_count = self.loss_count.get(symbol, 0)
 
-        logger.debug(f"Daily Loss Check for {symbol}: "
-                    f"Global Loss: {current_daily_losses:.2f}/{max_daily_losses}, "
-                    f"Global Count: {current_loss_count}/{max_daily_loss_count}, "
-                    f"Symbol Loss: {symbol_daily_losses:.2f}/{max_daily_losses_per_symbol}, "
-                    f"Symbol Count: {symbol_loss_count}/{max_daily_loss_count_per_symbol}")
+        logger.debug(f"Daily Loss Limit Check for {symbol}:")
+        logger.debug(f"  Global: ${current_daily_losses:.2f}/{max_daily_losses if max_daily_losses > 0 else 'unlimited'} | {current_loss_count}/{max_daily_loss_count if max_daily_loss_count > 0 else 'unlimited'} losses")
+        logger.debug(f"  {symbol}: ${symbol_daily_losses:.2f}/{max_daily_losses_per_symbol if max_daily_losses_per_symbol > 0 else 'unlimited'} | {symbol_loss_count}/{max_daily_loss_count_per_symbol if max_daily_loss_count_per_symbol > 0 else 'unlimited'} losses")
         
         # -1 means unlimited
         if (max_daily_losses == -1 and max_daily_losses_per_symbol == -1 and
             max_daily_loss_count == -1 and max_daily_loss_count_per_symbol == -1):
-            return True, "No daily loss limits configured"
+            return True, "✓ No daily loss limits configured"
         
         # Check global daily loss limit
         if max_daily_losses != -1 and current_daily_losses >= max_daily_losses:
-            return False, (f"Global daily loss limit reached: "
-                         f"{current_daily_losses:.2f}/{max_daily_losses:.2f}")
+            return False, (f"⛔ Global daily loss limit reached: "
+                         f"${current_daily_losses:.2f}/${max_daily_losses:.2f}")
         
-        # Check global daily loss count limit
+        # Check global daily loss count limit (THIS IS THE LOSING TRADE COUNT)
         if max_daily_loss_count != -1 and current_loss_count >= max_daily_loss_count:
-            return False, (f"Global daily loss count limit reached: "
-                         f"{current_loss_count}/{max_daily_loss_count} losses")
+            return False, (f"⛔ Global daily loss count limit reached: "
+                         f"{current_loss_count}/{max_daily_loss_count} losing trades")
         
         # Check per-symbol daily loss limit
         if max_daily_losses_per_symbol != -1 and symbol_daily_losses >= max_daily_losses_per_symbol:
-            return False, (f"Daily loss limit for {symbol} reached: "
-                         f"{symbol_daily_losses:.2f}/{max_daily_losses_per_symbol:.2f}")
+            return False, (f"⛔ Daily loss limit for {symbol} reached: "
+                         f"${symbol_daily_losses:.2f}/${max_daily_losses_per_symbol:.2f}")
         
-        # Check per-symbol daily loss count limit
+        # Check per-symbol daily loss count limit (THIS IS THE LOSING TRADE COUNT FOR THE SYMBOL)
         if max_daily_loss_count_per_symbol != -1 and symbol_loss_count >= max_daily_loss_count_per_symbol:
-            return False, (f"Daily loss count limit for {symbol} reached: "
-                         f"{symbol_loss_count}/{max_daily_loss_count_per_symbol} losses")
+            return False, (f"⛔ Daily loss count limit for {symbol} reached: "
+                         f"{symbol_loss_count}/{max_daily_loss_count_per_symbol} losing trades")
         
-        return True, "Trading allowed"
+        return True, "✓ Trading allowed (loss limits OK)"
     
     def get_daily_summary(self):
         """
@@ -174,38 +277,63 @@ class DailyLossTracker:
     def log_daily_summary(self):
         """Log the current day's summary"""
         summary = self.get_daily_summary()
+        logger.info("")
         logger.info("="*70)
-        logger.info("DAILY LOSS SUMMARY")
+        logger.info("📊 DAILY LOSS SUMMARY (Losing Trades Only)")
         logger.info(f"Date: {summary['date']}")
         logger.info("-"*70)
         
         global_stats = summary['global']
-        logger.info(f"Global:")
-        logger.info(f"  Total Losses: {global_stats['total_losses']:.2f}")
-        logger.info(f"  Loss Count: {global_stats['loss_count']}")
+        logger.info(f"GLOBAL:")
+        logger.info(f"  Total Losses: ${global_stats['total_losses']:.2f}", end="")
         if global_stats['max_allowed'] > 0:
-            logger.info(f"  Max Daily Losses: {global_stats['max_allowed']:.2f}")
+            logger.info(f" / ${global_stats['max_allowed']:.2f}")
+        else:
+            logger.info(f" (unlimited)")
+        
+        logger.info(f"  Losing Trades: {global_stats['loss_count']}", end="")
         if global_stats['max_allowed_count'] > 0:
-            logger.info(f"  Max Daily Loss Count: {global_stats['max_allowed_count']}")
+            logger.info(f" / {global_stats['max_allowed_count']}")
+        else:
+            logger.info(f" (unlimited)")
         
         if summary['per_symbol']:
             logger.info("-"*70)
-            logger.info("Per-Symbol:")
+            logger.info("PER-SYMBOL:")
             for symbol, stats in summary['per_symbol'].items():
                 logger.info(f"  {symbol}:")
-                logger.info(f"    Total Losses: {stats['total_losses']:.2f}")
-                logger.info(f"    Loss Count: {stats['loss_count']}")
+                logger.info(f"    Losses: ${stats['total_losses']:.2f}", end="")
+                if stats['max_allowed'] > 0:
+                    logger.info(f" / ${stats['max_allowed']:.2f}")
+                else:
+                    logger.info(f" (unlimited)")
+                
+                logger.info(f"    Losing Trades: {stats['loss_count']}", end="")
+                if stats['max_allowed_count'] > 0:
+                    logger.info(f" / {stats['max_allowed_count']}")
+                else:
+                    logger.info(f" (unlimited)")
         
         logger.info("="*70)
-
 
 # Global instance
 daily_loss_tracker = DailyLossTracker()
 
+# Initialize tracker from MT5 history on startup
+def initialize_daily_loss_tracker():
+    """
+    Initialize the daily loss tracker by loading history from MT5
+    Call this at bot startup AFTER MT5 connection is established
+    """
+    logger.info("Initializing daily loss tracker from MT5 history...")
+    daily_loss_tracker.load_history_from_mt5()
 
 def check_daily_loss_limit(symbol):
     """
-    Check if trading is allowed based on daily loss limits
+    Check if trading is allowed based on daily LOSS limits
+    
+    This checks if we've exceeded our maximum losing trades for the day
+    NOT about how many positions are open!
     
     Args:
         symbol: Trading pair
@@ -218,11 +346,11 @@ def check_daily_loss_limit(symbol):
 
 def record_trade_loss(symbol, loss_amount):
     """
-    Record a losing trade
+    Record a LOSING trade
     
     Args:
         symbol: Trading pair
-        loss_amount: Loss amount (positive value)
+        loss_amount: Loss amount (positive value, e.g., 50.00)
     """
     daily_loss_tracker.record_loss(symbol, loss_amount)
 
@@ -627,31 +755,49 @@ def validate_trade_setup(entry_price, stop_price, tp_price, side):
 
 
 # ========================== POSITION LIMITS ==========================
+# IMPORTANT: These check OPEN TRADES, not losing trades!
 
 def check_max_positions_reached():
     """
-    Check if maximum number of concurrent positions is reached (global limit)
+    Check if maximum number of OPEN concurrent positions is reached (global limit)
+    
+    This checks: How many trades are OPEN RIGHT NOW across ALL symbols?
+    Limit: CONFIG['max_concurrent_trades']
     
     Returns:
-        bool: True if max reached
+        bool: True if max OPEN positions reached
     """
     if not MT5_AVAILABLE:
         return False
     
-    # Get all open positions across all symbols by calling with no arguments
-    positions = get_open_positions()
+    try:
+        # Get all open positions across all symbols
+        positions = get_open_positions()
+        
+        if positions is None:
+            return False
+        
+        # Filter for our bot's trades only
+        our_positions = [p for p in positions if p.magic == 234000]
+        
+        current_open = len(our_positions)
+        max_allowed = CONFIG['max_concurrent_trades']
+        
+        logger.debug(f"Global position check: {current_open}/{max_allowed} open trades")
+        
+        return current_open >= max_allowed
     
-    if positions is None:
+    except Exception as e:
+        logger.error(f"Error checking global positions: {e}")
         return False
-    
-    our_positions = [p for p in positions if p.magic == 234000]
-    
-    return len(our_positions) >= CONFIG['max_concurrent_trades']
 
 
 def check_max_positions_reached_for_symbol(symbol):
     """
-    Check if maximum number of concurrent positions for a specific symbol is reached
+    Check if maximum number of OPEN concurrent positions for a specific symbol is reached
+    
+    This checks: How many trades are OPEN RIGHT NOW on THIS symbol?
+    Limit: CONFIG['max_concurrent_trades_of_same_pair']
     
     Returns:
         tuple: (limit_reached, current_count, max_allowed)
@@ -660,14 +806,21 @@ def check_max_positions_reached_for_symbol(symbol):
         return False, 0, CONFIG['max_concurrent_trades_of_same_pair']
     
     try:
+        # Get all open positions for this symbol
         positions = get_open_positions(symbol=symbol)
         
+        if positions is None:
+            return False, 0, CONFIG['max_concurrent_trades_of_same_pair']
+        
+        # Filter for our bot's trades only
         our_positions = [p for p in positions if p.magic == 234000 and p.symbol == symbol]
         
-        current_count = len(our_positions)
+        current_open = len(our_positions)
         max_allowed = CONFIG['max_concurrent_trades_of_same_pair']
         
-        return current_count >= max_allowed, current_count, max_allowed
+        logger.debug(f"Per-symbol position check ({symbol}): {current_open}/{max_allowed} open trades")
+        
+        return current_open >= max_allowed, current_open, max_allowed
     
     except Exception as e:
         logger.error(f"Error checking positions for symbol {symbol}: {e}")

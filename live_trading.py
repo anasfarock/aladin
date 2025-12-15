@@ -2,7 +2,10 @@
 Live Trading Engine - Enhanced with ADX Strength Validation, ATR Stops, and Macro Analysis
 Shows ADX strength validation and ATR stop comparison before executing trades
 """
-
+from risk_management import (
+    # ... existing imports ...
+    initialize_daily_loss_tracker  # <-- ADD THIS
+)
 import time
 import logging
 from datetime import datetime  # <-- ADD THIS LINE
@@ -208,10 +211,19 @@ def _check_adx_filter(adx_dataframes_dict, trend):
         'adx_analysis': adx_analysis
     }
 
+"""
+FIXED _monitor_closed_trades function for live_trading.py
+
+Replace the existing _monitor_closed_trades function with this corrected version
+This properly filters deals by symbol and magic number
+"""
+
 def _monitor_closed_trades(symbol):
     """
     Monitor and record losses from closed positions.
     Called at each cycle to track new closed trades.
+    
+    FIXED: Properly filters deals by symbol and magic number
     """
     if not MT5_AVAILABLE:
         return
@@ -222,66 +234,197 @@ def _monitor_closed_trades(symbol):
 
         # Fetch deals from the last 24 hours to be safe
         from_date = datetime.now() - timedelta(days=1)
-        deals = mt5.history_deals_get(from_date, datetime.now())
+        
+        # CRITICAL FIX: Use group parameter to filter by symbol
+        # This is the correct way to filter deals in MT5 Python API
+        deals = mt5.history_deals_get(from_date, datetime.now(), group=symbol)
 
         if deals is None:
-            logger.debug("No deals found in history.")
+            logger.debug(f"No deals found for {symbol} in history.")
             return
 
-        deals_to_process = [d for d in deals if d.ticket not in processed_deals]
+        if len(deals) == 0:
+            logger.debug(f"No deals found for {symbol} in the last 24 hours.")
+            return
+
+        # Filter for:
+        # 1. Our bot's trades (magic == 234000)
+        # 2. Closing deals (entry == DEAL_ENTRY_OUT)
+        # 3. Losing trades (profit < 0)
+        deals_to_process = []
+        
+        for deal in deals:
+            # Skip if already processed
+            if deal.ticket in processed_deals:
+                continue
+            
+            # Only process our bot's trades
+            if deal.magic != 234000:
+                continue
+            
+            # Only process closing deals (exit from position)
+            if deal.entry != mt5.DEAL_ENTRY_OUT:
+                continue
+            
+            # Only process losing trades
+            if deal.profit >= 0:
+                continue
+            
+            deals_to_process.append(deal)
 
         if not deals_to_process:
+            logger.debug(f"No new closing losses found for {symbol}")
             return
 
-        logger.debug(f"Found {len(deals_to_process)} new deals to process for loss recording.")
+        logger.debug(f"Found {len(deals_to_process)} new losing deals for {symbol}")
 
         for deal in deals_to_process:
             # Mark deal as processed immediately
             processed_deals.add(deal.ticket)
 
-            # Filter for our bot's trades
-            if deal.magic != 234000:
-                continue
-
-            # A closing deal has entry type 'DEAL_ENTRY_OUT'
-            # We only care about losses
-            if deal.entry == mt5.DEAL_ENTRY_OUT and deal.profit < 0:
-                loss_amount = abs(deal.profit)
-                logger.info(f"Closed position detected (Deal #{deal.ticket}): Recording loss of {loss_amount:.2f} for {deal.symbol}")
-                record_trade_loss(deal.symbol, loss_amount)
+            loss_amount = abs(deal.profit)
+            
+            # Log detailed info about the loss
+            logger.info(f"")
+            logger.info(f"{'='*70}")
+            logger.info(f"📊 CLOSED POSITION - LOSS RECORDED")
+            logger.info(f"{'='*70}")
+            logger.info(f"  Symbol: {deal.symbol}")
+            logger.info(f"  Deal Ticket: {deal.ticket}")
+            logger.info(f"  Entry Type: {deal.entry}")
+            logger.info(f"  Volume: {deal.volume} lots")
+            logger.info(f"  Entry Price: {deal.price:.5f}")
+            logger.info(f"  Profit/Loss: -${loss_amount:.2f}")
+            logger.info(f"  Time: {datetime.fromtimestamp(deal.time)}")
+            logger.info(f"{'='*70}")
+            
+            # Record the loss
+            record_trade_loss(deal.symbol, loss_amount)
 
     except Exception as e:
         # Use debug level to avoid spamming logs if MT5 connection is temporarily down
         logger.debug(f"Error monitoring closed trades: {e}")
 
+
+# ALTERNATIVE if the above doesn't work (fallback method):
+# Use this if the group parameter doesn't work with your MT5 build
+
+def _monitor_closed_trades_fallback(symbol):
+    """
+    Fallback version that fetches all deals and filters manually
+    Use this if the group parameter doesn't work
+    """
+    if not MT5_AVAILABLE:
+        return
+
+    try:
+        import MetaTrader5 as mt5
+        from datetime import datetime, timedelta
+
+        # Fetch deals from the last 24 hours
+        from_date = datetime.now() - timedelta(days=1)
+        
+        # Get ALL deals (no filtering)
+        all_deals = mt5.history_deals_get(from_date, datetime.now())
+
+        if all_deals is None or len(all_deals) == 0:
+            logger.debug("No deals found in history")
+            return
+
+        # Manually filter deals
+        deals_to_process = []
+        
+        for deal in all_deals:
+            # Skip if already processed
+            if deal.ticket in processed_deals:
+                continue
+            
+            # Only process this specific symbol
+            if deal.symbol != symbol:
+                continue
+            
+            # Only process our bot's trades (magic number 234000)
+            if deal.magic != 234000:
+                continue
+            
+            # Only process closing deals (exit from position)
+            if deal.entry != mt5.DEAL_ENTRY_OUT:
+                continue
+            
+            # Only process losing trades
+            if deal.profit >= 0:
+                continue
+            
+            deals_to_process.append(deal)
+
+        if not deals_to_process:
+            logger.debug(f"No new closing losses found for {symbol}")
+            return
+
+        logger.debug(f"Found {len(deals_to_process)} new losing deals for {symbol}")
+
+        for deal in deals_to_process:
+            # Mark deal as processed immediately
+            processed_deals.add(deal.ticket)
+
+            loss_amount = abs(deal.profit)
+            
+            logger.info(f"")
+            logger.info(f"{'='*70}")
+            logger.info(f"📊 CLOSED POSITION - LOSS RECORDED")
+            logger.info(f"{'='*70}")
+            logger.info(f"  Symbol: {deal.symbol}")
+            logger.info(f"  Deal Ticket: {deal.ticket}")
+            logger.info(f"  Volume: {deal.volume} lots")
+            logger.info(f"  Entry Price: {deal.price:.5f}")
+            logger.info(f"  Profit/Loss: -${loss_amount:.2f}")
+            logger.info(f"  Time: {datetime.fromtimestamp(deal.time)}")
+            logger.info(f"{'='*70}")
+            
+            # Record the loss
+            record_trade_loss(deal.symbol, loss_amount)
+
+    except Exception as e:
+        logger.debug(f"Error monitoring closed trades (fallback): {e}")
+
 def live_run_once(symbol):
     """
     Execute one live trading cycle with ADX, ATR stops, and macro analysis
-    FIXED: Proper order of checks - loss limits FIRST, then position limits
+    FIXED: Proper order of ALL checks - loss limits AND position limits
     """
-    # ===== CHECK DAILY LOSS LIMITS FIRST =====
+    logger.info("="*70)
+    logger.info("🔍 PRE-TRADE VALIDATION CHECKS")
+    logger.info("="*70)
+    
+    # ===== CHECK 1: DAILY LOSS LIMITS =====
     can_trade, loss_limit_reason = check_daily_loss_limit(symbol)
+    logger.info(f"1️⃣  Daily Loss Limit: {loss_limit_reason}")
     if not can_trade:
-        logger.warning(f"⛔ Daily Loss Limit: {loss_limit_reason}")
+        logger.warning(f"   ⛔ BLOCKED - {loss_limit_reason}")
         logger.info("="*70)
         return None
-    else:
-        logger.info(f"✓ Daily Loss Limit Check: {loss_limit_reason}")
     
-    # ===== CHECK POSITION LIMITS =====
-    # Check global max positions limit
+    # ===== CHECK 2: GLOBAL MAX POSITIONS =====
     if check_max_positions_reached():
-        logger.info(f"⛔ Max concurrent trades ({CONFIG['max_concurrent_trades']}) reached (global limit)")
+        max_trades = CONFIG['max_concurrent_trades']
+        logger.warning(f"2️⃣  Global Position Limit: ⛔ BLOCKED")
+        logger.warning(f"   Max concurrent trades ({max_trades}) already reached")
+        logger.info("="*70)
         return None
+    logger.info(f"2️⃣  Global Position Limit: ✓ OK ({CONFIG['max_concurrent_trades']} max)")
     
-    # Check per-symbol max positions limit
+    # ===== CHECK 3: PER-SYMBOL MAX POSITIONS =====
     symbol_limit_reached, current_count, max_allowed = check_max_positions_reached_for_symbol(symbol)
     if symbol_limit_reached:
-        logger.info(f"⛔ Max concurrent trades for {symbol} ({max_allowed}) reached. "
-                   f"Current: {current_count}/{max_allowed}")
+        logger.warning(f"3️⃣  Per-Symbol Position Limit: ⛔ BLOCKED")
+        logger.warning(f"   {symbol}: {current_count}/{max_allowed} trades (limit reached)")
+        logger.info("="*70)
         return None
+    logger.info(f"3️⃣  Per-Symbol Position Limit: ✓ OK ({current_count}/{max_allowed} on {symbol})")
     
-    logger.info(f"✓ Position Limit: {current_count}/{max_allowed} on {symbol}")
+    logger.info("="*70)
+    logger.info("✓ ALL PRE-TRADE CHECKS PASSED - Proceeding with analysis")
+    logger.info("="*70)
     
     # Monitor existing positions
     monitor_live_positions(symbol)
@@ -581,7 +724,6 @@ def live_run_once(symbol):
     except Exception as e:
         logger.error(f"Error in live trading cycle: {e}", exc_info=True)
         return None
-
 def start_live_trading(symbol=None):
     """
     Start the live trading bot with ADX, ATR stops, and macro analysis
@@ -672,6 +814,8 @@ def start_live_trading(symbol=None):
         balance = get_account_balance()
         logger.info(f"✓ Account Balance: ${balance:.2f}")
         
+        initialize_daily_loss_tracker()  # Load today's losses from MT5 history
+        
         logger.info("\n🤖 Bot is now running...")
         logger.info("Press Ctrl+C to stop\n")
         
@@ -708,6 +852,5 @@ def start_live_trading(symbol=None):
         disconnect_mt5()
         logger.info("✓ Disconnected from MetaTrader5")
         logger.info("Bot stopped.")
-
 if __name__ == '__main__':
     start_live_trading()

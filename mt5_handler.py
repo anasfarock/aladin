@@ -1,12 +1,6 @@
-"""
-MT5 Handler Module - COMPLETE WITH STOP VALIDATION
-Handles MT5 connection, data fetching, and order placement with proper retry logic
-FIXED: Added broker stop level validation and current price usage
-"""
-
 import time
 import math
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta  # <-- MAKE SURE THIS IS HERE
 import pandas as pd
 import logging
 from config import CONFIG, MT5_AVAILABLE, mt5, MT5_TIMEFRAMES
@@ -17,24 +11,30 @@ logger = logging.getLogger(__name__)
 
 def check_trading_permissions():
     """Check if automated trading is allowed"""
-    terminal_info = mt5.terminal_info()
-    if terminal_info is None:
-        return False, "Cannot get terminal info"
+    try:
+        terminal_info = mt5.terminal_info()
+        if terminal_info is None:
+            return False, "Cannot get terminal info"
+        
+        if not terminal_info.trade_allowed:
+            return False, "Trading not allowed in terminal"
+        
+        account_info = mt5.account_info()
+        if account_info is None:
+            return False, "Cannot get account info"
+        
+        if not account_info.trade_allowed:
+            return False, "Trading not allowed for this account"
+        
+        if not account_info.trade_expert:
+            return False, "Expert Advisor trading not allowed"
+        
+        return True, "All permissions OK"
     
-    if not terminal_info.trade_allowed:
-        return False, "Trading not allowed in terminal"
-    
-    account_info = mt5.account_info()
-    if account_info is None:
-        return False, "Cannot get account info"
-    
-    if not account_info.trade_allowed:
-        return False, "Trading not allowed for this account"
-    
-    if not account_info.trade_expert:
-        return False, "Expert Advisor trading not allowed"
-    
-    return True, "All permissions OK"
+    except Exception as e:
+        logger.error(f"Error checking trading permissions: {e}")
+        return False, f"Error: {str(e)}"
+
 
 def ensure_mt5_initialized():
     """Initialize MT5 connection"""
@@ -45,10 +45,12 @@ def ensure_mt5_initialized():
         err = mt5.last_error()
         raise RuntimeError(f"MT5 initialization failed: {err}")
 
+
 def connect_mt5(path=None):
     """Connect to MT5"""
     ensure_mt5_initialized()
     logger.info('MT5 connected successfully')
+
 
 def disconnect_mt5():
     """Disconnect from MT5"""
@@ -56,25 +58,68 @@ def disconnect_mt5():
         mt5.shutdown()
         logger.info('MT5 disconnected')
 
+
 def get_account_balance():
-    """Get account balance"""
-    info = mt5.account_info()
-    if info is None:
-        raise RuntimeError('Could not get account info')
-    return info.balance
+    """
+    Get account balance with error handling
+    
+    Returns:
+        float: Account balance
+    
+    Raises:
+        RuntimeError: If balance cannot be retrieved
+    """
+    try:
+        info = mt5.account_info()
+        if info is None:
+            raise RuntimeError('Could not get account info')
+        
+        if info.balance <= 0:
+            logger.warning(f"Account balance is {info.balance} (unexpected)")
+        
+        logger.debug(f"Account balance: ${info.balance:.2f}")
+        return info.balance
+    
+    except Exception as e:
+        logger.error(f"Error getting account balance: {e}")
+        raise RuntimeError(f'Cannot get account balance: {e}')
+
 
 def get_symbol_info(symbol):
-    """Get symbol information"""
-    info = mt5.symbol_info(symbol)
-    if info is None:
-        raise RuntimeError(f'Symbol {symbol} not available')
+    """
+    Get symbol information with proper error handling
     
-    # Enable symbol if not visible
-    if not info.visible:
-        if not mt5.symbol_select(symbol, True):
-            raise RuntimeError(f'Failed to select symbol {symbol}')
+    Returns:
+        SymbolInfo: Symbol info object
     
-    return info
+    Raises:
+        RuntimeError: If symbol not available
+    """
+    try:
+        info = mt5.symbol_info(symbol)
+        if info is None:
+            logger.error(f"Symbol {symbol} not found in MT5")
+            raise RuntimeError(f'Symbol {symbol} not available')
+        
+        # Enable symbol if not visible
+        if not info.visible:
+            logger.debug(f"Symbol {symbol} not visible, attempting to select...")
+            if not mt5.symbol_select(symbol, True):
+                logger.error(f"Failed to select symbol {symbol}")
+                raise RuntimeError(f'Failed to select symbol {symbol}')
+            
+            # Fetch info again after selecting
+            info = mt5.symbol_info(symbol)
+            if info is None:
+                raise RuntimeError(f'Failed to get info for {symbol} after selection')
+        
+        logger.debug(f"Symbol info retrieved: {symbol}, digits={info.digits}, point={info.point}")
+        return info
+    
+    except Exception as e:
+        logger.error(f"Error getting symbol info for {symbol}: {e}")
+        raise
+
 
 # --------------------------- DATA FETCHING ----------------------------
 
@@ -98,26 +143,51 @@ def fetch_mt5_df(symbol, tf_const, utc_from, utc_to, min_bars_expected=1):
     
     return df
 
+
 def fetch_live_data(symbol, timeframe, num_bars=500):
-    """Fetch live data from MT5"""
-    ensure_mt5_initialized()
+    """
+    Fetch live data from MT5 with error handling
     
-    tf_const = MT5_TIMEFRAMES.get(timeframe)
-    if tf_const is None:
-        raise ValueError(f"Unsupported timeframe: {timeframe}")
+    Args:
+        symbol: Trading pair
+        timeframe: Timeframe string (M15, H1, etc.)
+        num_bars: Number of bars to fetch
     
-    bars = mt5.copy_rates_from_pos(symbol, tf_const, 0, num_bars)
+    Returns:
+        DataFrame: OHLC data
     
-    if bars is None:
-        raise RuntimeError(f"Failed to fetch live data for {symbol}")
+    Raises:
+        ValueError: If timeframe unsupported
+        RuntimeError: If data fetch fails
+    """
+    try:
+        ensure_mt5_initialized()
+        
+        tf_const = MT5_TIMEFRAMES.get(timeframe)
+        if tf_const is None:
+            raise ValueError(f"Unsupported timeframe: {timeframe}")
+        
+        logger.debug(f"Fetching {num_bars} bars of {symbol} {timeframe}...")
+        bars = mt5.copy_rates_from_pos(symbol, tf_const, 0, num_bars)
+        
+        if bars is None:
+            raise RuntimeError(f"Failed to fetch live data for {symbol}")
+        
+        if len(bars) < num_bars:
+            logger.warning(f"Requested {num_bars} bars but only got {len(bars)}")
+        
+        df = pd.DataFrame(bars)
+        df['time'] = pd.to_datetime(df['time'], unit='s')
+        
+        if 'tick_volume' not in df.columns:
+            df['tick_volume'] = 1
+        
+        logger.debug(f"Data fetch successful: {len(df)} bars")
+        return df
     
-    df = pd.DataFrame(bars)
-    df['time'] = pd.to_datetime(df['time'], unit='s')
-    
-    if 'tick_volume' not in df.columns:
-        df['tick_volume'] = 1
-    
-    return df
+    except Exception as e:
+        logger.error(f"Error fetching live data for {symbol} {timeframe}: {e}")
+        raise
 
 # --------------------------- PRICE UTILITIES ----------------------------
 
@@ -131,11 +201,13 @@ def get_current_price(symbol, side):
     price = tick.ask if side == 'buy' else tick.bid
     return price
 
+
 def normalize_price(symbol, price):
     """Normalize price to symbol's digits"""
     symbol_info = get_symbol_info(symbol)
     digits = symbol_info.digits
     return round(price, digits)
+
 
 def determine_filling_type(symbol):
     """
@@ -265,7 +337,8 @@ def adjust_stops_to_broker_limits(symbol, side, entry_price, stop_price, tp_pric
     
     return stop_price, tp_price, True, "Valid stops"
 
-# --------------------------- ORDER EXECUTION (FIXED) ----------------------------
+
+# --------------------------- ORDER EXECUTION ----------------------------
 
 def calc_volume(symbol, entry_price, stop_price, risk_amount):
     """Calculate position size"""
@@ -290,6 +363,7 @@ def calc_volume(symbol, entry_price, stop_price, risk_amount):
     
     return round(lots, 2)
 
+
 def place_market_order(symbol, side, volume, sl, tp):
     """
     Place market order with FIXED execution logic
@@ -300,131 +374,251 @@ def place_market_order(symbol, side, volume, sl, tp):
     3. Proper filling type detection
     4. Price normalization
     5. Retry logic with fresh prices
-    6. FIXED: Safe CONFIG access with defaults
+    6. Safe CONFIG access with defaults
+    7. Better error logging
     """
-    symbol_info = get_symbol_info(symbol)
-    
-    # Determine proper filling type
-    filling_type = determine_filling_type(symbol)
-    
-    # Safe CONFIG access with defaults
-    max_retries = CONFIG.get('max_retries', 3)
-    retry_delay = CONFIG.get('retry_delay', 0.5)
-    slippage = CONFIG.get('slippage_points', 50)
-    
-    logger.debug(f"Order config - Max retries: {max_retries}, Retry delay: {retry_delay}s, Slippage: {slippage}")
-    
-    # Retry loop for order placement
-    for attempt in range(max_retries):
-        try:
-            # Get FRESH tick price for this attempt
-            current_price = get_current_price(symbol, side)
-            
-            # CRITICAL: Adjust stops based on ACTUAL entry price
-            adjusted_sl, adjusted_tp, is_valid, error_msg = adjust_stops_to_broker_limits(
-                symbol, side, current_price, sl, tp
-            )
-            
-            if not is_valid:
-                raise RuntimeError(f"Cannot adjust stops to valid levels: {error_msg}")
-            
-            # Log adjustments if made
-            if abs(adjusted_sl - sl) > symbol_info.point:
-                logger.warning(f"Stop Loss adjusted: {sl:.5f} → {adjusted_sl:.5f}")
-            if abs(adjusted_tp - tp) > symbol_info.point:
-                logger.warning(f"Take Profit adjusted: {tp:.5f} → {adjusted_tp:.5f}")
-            
-            # Normalize all prices
-            price = normalize_price(symbol, current_price)
-            adjusted_sl = normalize_price(symbol, adjusted_sl)
-            adjusted_tp = normalize_price(symbol, adjusted_tp)
-            
-            logger.info(f"Attempt {attempt + 1}: {side.upper()} {volume} lots @ {price}")
-            logger.info(f"SL: {adjusted_sl}, TP: {adjusted_tp}, Filling: {filling_type}")
-            
-            # Build request with safe CONFIG access
-            request = {
-                'action': mt5.TRADE_ACTION_DEAL,
-                'symbol': symbol,
-                'volume': volume,
-                'type': mt5.ORDER_TYPE_BUY if side == 'buy' else mt5.ORDER_TYPE_SELL,
-                'price': price,
-                'sl': adjusted_sl,
-                'tp': adjusted_tp,
-                'deviation': slippage,  # Use locally defined variable
-                'magic': 234000,
-                'comment': 'ICT Fibonacci Bot',
-                'type_time': mt5.ORDER_TIME_GTC,
-                'type_filling': filling_type,
-            }
-            
-            # Send order
-            result = mt5.order_send(request)
-            
-            if result is None:
-                error = mt5.last_error()
-                logger.error(f"Order send returned None: {error}")
-                
-                if attempt < max_retries - 1:
-                    time.sleep(retry_delay)
-                    continue
-                else:
-                    raise RuntimeError(f"Order failed after {max_retries} attempts: {error}")
-            
-            # Check result
-            if result.retcode == mt5.TRADE_RETCODE_DONE:
-                logger.info(f"✓ Order executed successfully: {result.order}")
-                logger.info(f"  Deal: {result.deal}, Volume: {result.volume}, Price: {result.price}")
-                return result
-            
-            elif result.retcode in [mt5.TRADE_RETCODE_REQUOTE, mt5.TRADE_RETCODE_PRICE_OFF]:
-                # Price changed, retry with new price
-                logger.warning(f"Price changed (code {result.retcode}), retrying...")
-                if attempt < max_retries - 1:
-                    time.sleep(retry_delay)
-                    continue
-            
-            elif result.retcode == mt5.TRADE_RETCODE_INVALID_FILL:
-                # Try different filling type
-                logger.warning(f"Invalid fill type, trying alternative...")
-                if filling_type == mt5.ORDER_FILLING_FOK:
-                    filling_type = mt5.ORDER_FILLING_IOC
-                elif filling_type == mt5.ORDER_FILLING_IOC:
-                    filling_type = mt5.ORDER_FILLING_RETURN
-                
-                if attempt < max_retries - 1:
-                    time.sleep(retry_delay)
-                    continue
-            
-            elif result.retcode == 10016:  # Invalid stops
-                logger.error("Stop levels are invalid even after adjustment")
-                logger.error(f"Entry: {price:.5f}")
-                logger.error(f"SL: {adjusted_sl:.5f} (distance: {abs(price - adjusted_sl):.5f})")
-                logger.error(f"TP: {adjusted_tp:.5f} (distance: {abs(price - adjusted_tp):.5f})")
-                logger.error(f"Min stop level: {symbol_info.stops_level} points")
-                raise RuntimeError(f"Order failed: {result.retcode} - {result.comment}")
-            
-            else:
-                # Other error
-                error_msg = f"Order failed: {result.retcode} - {result.comment}"
-                logger.error(error_msg)
-                
-                if attempt < max_retries - 1:
-                    time.sleep(retry_delay)
-                    continue
-                else:
-                    raise RuntimeError(error_msg)
+    try:
+        symbol_info = get_symbol_info(symbol)
         
-        except Exception as e:
-            logger.error(f"Exception during order placement: {e}")
-            if attempt < max_retries - 1:
-                time.sleep(retry_delay)
-                continue
-            else:
-                raise
+        # Determine proper filling type
+        filling_type = determine_filling_type(symbol)
+        
+        # Safe CONFIG access with defaults
+        max_retries = CONFIG.get('max_retries', 3)
+        retry_delay = CONFIG.get('retry_delay', 0.5)
+        slippage = CONFIG.get('slippage_points', 50)
+        
+        logger.debug(f"Order config - Max retries: {max_retries}, Retry delay: {retry_delay}s, Slippage: {slippage}")
+        logger.debug(f"Target SL: {sl:.5f}, TP: {tp:.5f}")
+        
+        # Retry loop for order placement
+        for attempt in range(max_retries):
+            try:
+                # Get FRESH tick price for this attempt
+                current_price = get_current_price(symbol, side)
+                
+                logger.debug(f"Attempt {attempt + 1}/{max_retries}: Current price = {current_price:.5f}")
+                
+                # CRITICAL: Adjust stops based on ACTUAL entry price
+                adjusted_sl, adjusted_tp, is_valid, error_msg = adjust_stops_to_broker_limits(
+                    symbol, side, current_price, sl, tp
+                )
+                
+                if not is_valid:
+                    logger.error(f"Stop adjustment failed: {error_msg}")
+                    raise RuntimeError(f"Cannot adjust stops to valid levels: {error_msg}")
+                
+                # Log adjustments if made
+                if abs(adjusted_sl - sl) > symbol_info.point:
+                    logger.info(f"Stop Loss adjusted: {sl:.5f} → {adjusted_sl:.5f}")
+                if abs(adjusted_tp - tp) > symbol_info.point:
+                    logger.info(f"Take Profit adjusted: {tp:.5f} → {adjusted_tp:.5f}")
+                
+                # Normalize all prices
+                price = normalize_price(symbol, current_price)
+                adjusted_sl = normalize_price(symbol, adjusted_sl)
+                adjusted_tp = normalize_price(symbol, adjusted_tp)
+                
+                logger.info(f"Attempt {attempt + 1}: {side.upper()} {volume} lots @ {price:.5f}")
+                logger.info(f"  SL: {adjusted_sl:.5f}, TP: {adjusted_tp:.5f}, Filling: {filling_type}")
+                
+                # Build request with safe CONFIG access
+                request = {
+                    'action': mt5.TRADE_ACTION_DEAL,
+                    'symbol': symbol,
+                    'volume': volume,
+                    'type': mt5.ORDER_TYPE_BUY if side == 'buy' else mt5.ORDER_TYPE_SELL,
+                    'price': price,
+                    'sl': adjusted_sl,
+                    'tp': adjusted_tp,
+                    'deviation': slippage,
+                    'magic': 234000,
+                    'comment': 'ICT Fibonacci Bot',
+                    'type_time': mt5.ORDER_TIME_GTC,
+                    'type_filling': filling_type,
+                }
+                
+                logger.debug(f"Sending order: {request}")
+                
+                # Send order
+                result = mt5.order_send(request)
+                
+                if result is None:
+                    error = mt5.last_error()
+                    logger.error(f"Order send returned None: {error}")
+                    
+                    if attempt < max_retries - 1:
+                        logger.info(f"Retrying in {retry_delay}s...")
+                        time.sleep(retry_delay)
+                        continue
+                    else:
+                        raise RuntimeError(f"Order failed after {max_retries} attempts: {error}")
+                
+                logger.debug(f"Order result - retcode: {result.retcode}, order: {result.order}, deal: {result.deal}")
+                
+                # Check result
+                if result.retcode == mt5.TRADE_RETCODE_DONE:
+                    logger.info(f"✓ Order executed successfully: {result.order}")
+                    logger.info(f"  Deal: {result.deal}, Volume: {result.volume}, Price: {result.price:.5f}")
+                    return result
+                
+                elif result.retcode in [mt5.TRADE_RETCODE_REQUOTE, mt5.TRADE_RETCODE_PRICE_OFF]:
+                    logger.warning(f"Price changed (code {result.retcode}), retrying...")
+                    if attempt < max_retries - 1:
+                        time.sleep(retry_delay)
+                        continue
+                
+                elif result.retcode == mt5.TRADE_RETCODE_INVALID_FILL:
+                    logger.warning(f"Invalid fill type {filling_type}, trying alternative...")
+                    if filling_type == mt5.ORDER_FILLING_FOK:
+                        filling_type = mt5.ORDER_FILLING_IOC
+                    elif filling_type == mt5.ORDER_FILLING_IOC:
+                        filling_type = mt5.ORDER_FILLING_RETURN
+                    
+                    if attempt < max_retries - 1:
+                        time.sleep(retry_delay)
+                        continue
+                
+                elif result.retcode == 10016:  # Invalid stops
+                    logger.error("❌ Stop levels are invalid even after adjustment")
+                    logger.error(f"Entry: {price:.5f}")
+                    logger.error(f"SL: {adjusted_sl:.5f} (distance: {abs(price - adjusted_sl):.5f})")
+                    logger.error(f"TP: {adjusted_tp:.5f} (distance: {abs(price - adjusted_tp):.5f})")
+                    
+                    try:
+                        min_level = symbol_info.trade_stops_level
+                        logger.error(f"Min stop level: {min_level} points")
+                    except:
+                        pass
+                    
+                    raise RuntimeError(f"Order failed: {result.retcode} - {result.comment}")
+                
+                else:
+                    error_msg = f"Order failed: {result.retcode} - {result.comment}"
+                    logger.error(error_msg)
+                    
+                    if attempt < max_retries - 1:
+                        time.sleep(retry_delay)
+                        continue
+                    else:
+                        raise RuntimeError(error_msg)
+            
+            except Exception as e:
+                logger.error(f"Exception during order placement attempt {attempt + 1}: {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    continue
+                else:
+                    raise
+        
+        raise RuntimeError(f"Order failed after {max_retries} attempts")
     
-    raise RuntimeError(f"Order failed after {max_retries} attempts")
+    except Exception as e:
+        logger.error(f"Fatal error in place_market_order: {e}", exc_info=True)
+        raise
 
+def load_history_from_mt5(self):
+    """
+    Load today's closed trades from MT5 account history on startup
+    This ensures we track losses even if the bot restarted
+    """
+    if not MT5_AVAILABLE:
+        logger.debug("MT5 not available, skipping history load")
+        return
+    
+    try:
+        from datetime import datetime, date
+        import MetaTrader5 as mt5_api  # Import MT5 locally to access constants
+        
+        logger.info("")
+        logger.info("="*70)
+        logger.info("📊 LOADING TODAY'S TRADE HISTORY FROM MT5")
+        logger.info("="*70)
+        
+        # Get today's date at midnight
+        today_start = datetime.combine(date.today(), datetime.min.time())
+        today_end = datetime.now()
+        
+        logger.debug(f"Fetching deals from {today_start} to {today_end}")
+        
+        # Fetch all deals for today
+        deals = mt5_api.history_deals_get(today_start, today_end)
+        
+        if deals is None:
+            logger.info("No trades found in MT5 history for today")
+            logger.info("="*70)
+            return
+        
+        if len(deals) == 0:
+            logger.info("No trades found in MT5 history for today")
+            logger.info("="*70)
+            return
+        
+        logger.debug(f"Found {len(deals)} total deals in history")
+        
+        # Process deals - only count closing deals that are losses
+        processed_count = 0
+        loss_count = 0
+        
+        for deal in deals:
+            try:
+                # Only process our bot's trades (magic number 234000)
+                if deal.magic != 234000:
+                    continue
+                
+                processed_count += 1
+                
+                # Only process closing deals (exit from position)
+                # DEAL_ENTRY_OUT = 1
+                if deal.entry != 1:  # 1 = DEAL_ENTRY_OUT
+                    continue
+                
+                # Only process losing trades
+                if deal.profit >= 0:
+                    continue
+                
+                # This is a loss
+                loss_count += 1
+                loss_amount = abs(deal.profit)
+                symbol = deal.symbol
+                
+                # Add to trackers
+                self.daily_losses['global'] += loss_amount
+                self.loss_count['global'] += 1
+                
+                self.daily_losses[symbol] += loss_amount
+                self.loss_count[symbol] += 1
+                
+                logger.debug(f"Loaded loss: {symbol} -${loss_amount:.2f}")
+            
+            except Exception as e:
+                logger.debug(f"Error processing deal: {e}")
+                continue
+        
+        logger.info("")
+        logger.info(f"✓ Loaded {processed_count} bot trades from history")
+        logger.info(f"✓ Found {loss_count} losing trades")
+        logger.info("")
+        
+        if loss_count > 0:
+            logger.info("Current Daily Loss Status:")
+            logger.info(f"  Global losses: ${self.daily_losses['global']:.2f} ({self.loss_count['global']} trades)")
+            
+            for symbol in self.daily_losses:
+                if symbol != 'global':
+                    logger.info(f"  {symbol}: ${self.daily_losses[symbol]:.2f} ({self.loss_count[symbol]} trades)")
+        else:
+            logger.info("No losing trades found in history")
+        
+        logger.info("="*70)
+        
+    except ImportError:
+        logger.warning("MetaTrader5 module not available for history loading")
+    except Exception as e:
+        logger.warning(f"Error loading history from MT5: {e}")
+        import traceback
+        logger.debug(traceback.format_exc())
+        logger.info("="*70)
 # --------------------------- POSITION MANAGEMENT ----------------------------
 
 def update_position_sl_tp(ticket, symbol, new_sl, new_tp):
@@ -473,17 +667,77 @@ def update_position_sl_tp(ticket, symbol, new_sl, new_tp):
         logger.error(f"Exception updating SL/TP: {e}")
         return False
 
+
 def get_open_positions(symbol=None):
-    """Get all open positions, optionally filtered by symbol"""
-    if symbol:
-        positions = mt5.positions_get(symbol=symbol)
-    else:
-        positions = mt5.positions_get()
+    """
+    Get all open positions, optionally filtered by symbol
     
-    if positions is None:
+    CRITICAL FIX: Ensures consistent return type (always list or empty list)
+    Never returns None
+    
+    Returns:
+        list: List of open positions (empty list if none found)
+    """
+    if not MT5_AVAILABLE:
+        logger.debug("MT5 not available, returning empty position list")
         return []
     
-    return list(positions)
+    try:
+        if symbol:
+            positions = mt5.positions_get(symbol=symbol)
+            logger.debug(f"Fetched positions for {symbol}: {type(positions)}, {len(positions) if positions else 0} positions")
+        else:
+            positions = mt5.positions_get()
+            logger.debug(f"Fetched all positions: {type(positions)}, {len(positions) if positions else 0} positions")
+        
+        # Handle None return from MT5
+        if positions is None:
+            logger.debug(f"mt5.positions_get() returned None for symbol={symbol}")
+            return []
+        
+        # Handle empty tuple/list
+        if len(positions) == 0:
+            logger.debug(f"No positions found for symbol={symbol}")
+            return []
+        
+        # Convert tuple to list if needed
+        position_list = list(positions)
+        logger.debug(f"Returning {len(position_list)} positions")
+        return position_list
+    
+    except Exception as e:
+        logger.error(f"Error fetching positions (symbol={symbol}): {e}")
+        return []
+
+
+def count_open_positions(symbol=None):
+    """
+    Get count of open positions
+    
+    Args:
+        symbol: Optional symbol to filter by
+    
+    Returns:
+        int: Number of open positions
+    """
+    try:
+        positions = get_open_positions(symbol=symbol)
+        
+        if not positions:
+            return 0
+        
+        # Filter for our bot's trades only (magic number 234000)
+        our_positions = [p for p in positions if p.magic == 234000]
+        
+        count = len(our_positions)
+        logger.debug(f"Count open positions (symbol={symbol}): {count}/{len(positions)} are ours")
+        
+        return count
+    
+    except Exception as e:
+        logger.error(f"Error counting positions: {e}")
+        return 0
+
 
 def close_position(ticket, symbol, volume=None):
     """Close position by ticket"""
