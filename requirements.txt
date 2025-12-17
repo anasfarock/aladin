@@ -1,0 +1,12 @@
+fastapi
+pydantic
+uvicorn
+pandas
+numpy
+MetaTrader5
+python-dotenv
+requests
+tweepy
+praw
+plotly
+kaleido
