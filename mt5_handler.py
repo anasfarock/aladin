@@ -517,32 +517,61 @@ def place_market_order(symbol, side, volume, sl, tp):
         logger.error(f"Fatal error in place_market_order: {e}", exc_info=True)
         raise
 
+"""
+FIXED load_history_from_mt5() - Handles timezone properly
+MT5 uses UTC, so we need to convert to local time or use UTC consistently
+"""
+
 def load_history_from_mt5(self):
     """
     Load today's closed trades from MT5 account history on startup
-    This ensures we track losses even if the bot restarted
+    FIXED: Handles timezone properly (MT5 uses UTC)
     """
     if not MT5_AVAILABLE:
         logger.debug("MT5 not available, skipping history load")
         return
     
     try:
-        from datetime import datetime, date
-        import MetaTrader5 as mt5_api  # Import MT5 locally to access constants
+        from datetime import datetime, date, time as dt_time
+        import pytz
+        import MetaTrader5 as mt5_api
         
         logger.info("")
         logger.info("="*70)
         logger.info("📊 LOADING TODAY'S TRADE HISTORY FROM MT5")
         logger.info("="*70)
         
-        # Get today's date at midnight
-        today_start = datetime.combine(date.today(), datetime.min.time())
-        today_end = datetime.now()
+        # MT5 uses UTC timezone
+        # Get today's start and end in UTC
+        utc_tz = pytz.UTC
+        local_tz = pytz.timezone('UTC')  # Change this to your timezone if needed
+        # Examples:
+        # pytz.timezone('America/New_York')  # EST/EDT
+        # pytz.timezone('Europe/London')     # GMT/BST
+        # pytz.timezone('Asia/Dubai')        # GST
+        # pytz.timezone('Asia/Karachi')      # PKT (Pakistan)
+
+        # Get today's date in local time
+        today_local = date.today()
         
-        logger.debug(f"Fetching deals from {today_start} to {today_end}")
+        # Convert to UTC for MT5 query
+        today_start_local = datetime.combine(today_local, dt_time.min)
+        today_end_local = datetime.combine(today_local, dt_time.max)
         
-        # Fetch all deals for today
-        deals = mt5_api.history_deals_get(today_start, today_end)
+        # Localize to your timezone
+        today_start_local = local_tz.localize(today_start_local)
+        today_end_local = local_tz.localize(today_end_local)
+        
+        # Convert to UTC for MT5
+        today_start_utc = today_start_local.astimezone(utc_tz)
+        today_end_utc = today_end_local.astimezone(utc_tz)
+        
+        logger.info(f"Local timezone: {local_tz}")
+        logger.info(f"Fetching deals from {today_start_utc} to {today_end_utc} (UTC)")
+        logger.debug(f"Local time: {today_start_local} to {today_end_local}")
+        
+        # Fetch all deals for today (MT5 expects UTC)
+        deals = mt5_api.history_deals_get(today_start_utc, today_end_utc)
         
         if deals is None:
             logger.info("No trades found in MT5 history for today")
@@ -612,13 +641,15 @@ def load_history_from_mt5(self):
         
         logger.info("="*70)
         
-    except ImportError:
-        logger.warning("MetaTrader5 module not available for history loading")
+    except ImportError as e:
+        logger.warning(f"Required module not available: {e}")
+        logger.warning("Install pytz: pip install pytz")
     except Exception as e:
         logger.warning(f"Error loading history from MT5: {e}")
         import traceback
         logger.debug(traceback.format_exc())
         logger.info("="*70)
+
 # --------------------------- POSITION MANAGEMENT ----------------------------
 
 def update_position_sl_tp(ticket, symbol, new_sl, new_tp):
