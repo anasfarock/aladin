@@ -274,7 +274,7 @@ class DailyLossTracker:
         
         return summary
     
-    def log_daily_summary(self):
+def log_daily_summary(self):
         """Log the current day's summary"""
         summary = self.get_daily_summary()
         logger.info("")
@@ -285,34 +285,36 @@ class DailyLossTracker:
         
         global_stats = summary['global']
         logger.info(f"GLOBAL:")
-        logger.info(f"  Total Losses: ${global_stats['total_losses']:.2f}", end="")
+
+        # Total Losses line
         if global_stats['max_allowed'] > 0:
-            logger.info(f" / ${global_stats['max_allowed']:.2f}")
+            logger.info(f"  Total Losses: ${global_stats['total_losses']:.2f} / ${global_stats['max_allowed']:.2f}")
         else:
-            logger.info(f" (unlimited)")
+            logger.info(f"  Total Losses: ${global_stats['total_losses']:.2f} (unlimited)")
         
-        logger.info(f"  Losing Trades: {global_stats['loss_count']}", end="")
+        # Losing Trades line
         if global_stats['max_allowed_count'] > 0:
-            logger.info(f" / {global_stats['max_allowed_count']}")
+            logger.info(f"  Losing Trades: {global_stats['loss_count']} / {global_stats['max_allowed_count']}")
         else:
-            logger.info(f" (unlimited)")
+            logger.info(f"  Losing Trades: {global_stats['loss_count']} (unlimited)")
         
         if summary['per_symbol']:
             logger.info("-"*70)
             logger.info("PER-SYMBOL:")
             for symbol, stats in summary['per_symbol'].items():
                 logger.info(f"  {symbol}:")
-                logger.info(f"    Losses: ${stats['total_losses']:.2f}", end="")
-                if stats['max_allowed'] > 0:
-                    logger.info(f" / ${stats['max_allowed']:.2f}")
-                else:
-                    logger.info(f" (unlimited)")
                 
-                logger.info(f"    Losing Trades: {stats['loss_count']}", end="")
-                if stats['max_allowed_count'] > 0:
-                    logger.info(f" / {stats['max_allowed_count']}")
+                # Losses line
+                if stats['max_allowed'] > 0:
+                    logger.info(f"    Losses: ${stats['total_losses']:.2f} / ${stats['max_allowed']:.2f}")
                 else:
-                    logger.info(f" (unlimited)")
+                    logger.info(f"    Losses: ${stats['total_losses']:.2f} (unlimited)")
+                
+                # Losing Trades line
+                if stats['max_allowed_count'] > 0:
+                    logger.info(f"    Losing Trades: {stats['loss_count']} / {stats['max_allowed_count']}")
+                else:
+                    logger.info(f"    Losing Trades: {stats['loss_count']} (unlimited)")
         
         logger.info("="*70)
 
