@@ -34,8 +34,8 @@ CONFIG = {
     'backtest': False,
     'start': '2025-11-13',
     'end': '2025-11-30',
-    'capital': 5000.0,
-    'risk_pct': 0.5,
+    'capital': 2500.0,
+    'risk_pct': 0.25,
     
     # Timeframes
     'timeframe_entry': 'M15',

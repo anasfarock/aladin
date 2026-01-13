@@ -274,7 +274,7 @@ class DailyLossTracker:
         
         return summary
     
-def log_daily_summary(self):
+    def log_daily_summary(self):
         """Log the current day's summary"""
         summary = self.get_daily_summary()
         logger.info("")
