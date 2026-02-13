@@ -160,6 +160,7 @@ class AladinGUI(ctk.CTk):
         # Create Tabs
         self.tab_dashboard = self.tabview.add("Log Output")
         self.tab_trading = self.tabview.add("Trading")
+        self.tab_indicators = self.tabview.add("Indicators")
         self.tab_risk = self.tabview.add("Risk")
         self.tab_adx = self.tabview.add("ADX Filter")
         self.tab_macro = self.tabview.add("Macro")
@@ -175,6 +176,9 @@ class AladinGUI(ctk.CTk):
 
         # --- Trading Tab ---
         self.create_trading_inputs(self.tab_trading)
+
+        # --- Indicators Tab ---
+        self.create_indicator_inputs(self.tab_indicators)
 
         # --- Risk Tab ---
         self.create_risk_inputs(self.tab_risk)
@@ -213,6 +217,19 @@ class AladinGUI(ctk.CTk):
         self.inputs[config_key] = {'entry': checkbox, 'type': bool}
         return checkbox
 
+    def create_option_row(self, parent, label_text, config_key, row, options, tooltip=None):
+        label = ctk.CTkLabel(parent, text=label_text, anchor="w")
+        label.grid(row=row, column=0, padx=10, pady=5, sticky="w")
+        
+        option_menu = ctk.CTkOptionMenu(parent, values=options, width=200)
+        option_menu.grid(row=row, column=1, padx=10, pady=5, sticky="w")
+        
+        if not hasattr(self, 'inputs'):
+            self.inputs = {}
+            
+        self.inputs[config_key] = {'entry': option_menu, 'type': str}
+        return option_menu
+
     def create_trading_inputs(self, parent):
         # Multi-Symbol Selection
         ctk.CTkLabel(parent, text="Trading Pairs", font=ctk.CTkFont(weight="bold")).grid(row=0, column=0, columnspan=2, sticky="w", padx=10)
@@ -242,7 +259,7 @@ class AladinGUI(ctk.CTk):
         ctk.CTkLabel(parent, text="Trend Analysis").grid(row=4, column=0, pady=(10,0), sticky="w")
         
         self.create_checkbox_row(parent, "Use Manual Trend Override", 'use_manual_trend', 5)
-        self.create_input_row(parent, "Manual Trend (bullish/bearish):", 'manual_trend', 6, str)
+        self.create_option_row(parent, "Manual Trend:", 'manual_trend', 6, ['bullish', 'bearish'])
         
         self.create_checkbox_row(parent, "Use Moving Averages", 'use_ma_for_trend', 7)
         self.create_checkbox_row(parent, "Use RSI", 'use_rsi_for_trend', 8)
@@ -251,6 +268,25 @@ class AladinGUI(ctk.CTk):
         
         self.create_input_row(parent, "Bullish Threshold:", 'trend_bullish_threshold', 11, int)
         self.create_input_row(parent, "Bearish Threshold:", 'trend_bearish_threshold', 12, int)
+
+    def create_indicator_inputs(self, parent):
+        # Moving Averages
+        ctk.CTkLabel(parent, text="Moving Averages", font=ctk.CTkFont(weight="bold")).grid(row=0, column=0, pady=(10,5), sticky="w", padx=10)
+        self.create_input_row(parent, "Fast MA Period:", 'ma_fast', 1, int)
+        self.create_input_row(parent, "Slow MA Period:", 'ma_slow', 2, int)
+        
+        # Bollinger Bands
+        ctk.CTkLabel(parent, text="Bollinger Bands", font=ctk.CTkFont(weight="bold")).grid(row=3, column=0, pady=(10,5), sticky="w", padx=10)
+        self.create_input_row(parent, "Period:", 'boll_period', 4, int)
+        self.create_input_row(parent, "Std Deviation:", 'boll_std', 5, float)
+        
+        # RSI
+        ctk.CTkLabel(parent, text="RSI", font=ctk.CTkFont(weight="bold")).grid(row=6, column=0, pady=(10,5), sticky="w", padx=10)
+        self.create_input_row(parent, "Period:", 'rsi_period', 7, int)
+        
+        # VWAP
+        ctk.CTkLabel(parent, text="VWAP", font=ctk.CTkFont(weight="bold")).grid(row=8, column=0, pady=(10,5), sticky="w", padx=10)
+        self.create_input_row(parent, "Period:", 'vwap_period', 9, int)
 
     def fetch_symbols_from_mt5(self):
         """Connect to MT5 and fetch all symbols"""
@@ -386,7 +422,9 @@ class AladinGUI(ctk.CTk):
                 widget = info['entry']
                 type_cast = info['type']
                 
-                if type_cast == bool:
+                if isinstance(widget, ctk.CTkOptionMenu):
+                     widget.set(str(value))
+                elif type_cast == bool:
                     if value:
                         widget.select()
                     else:
