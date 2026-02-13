@@ -848,19 +848,27 @@ def start_live_trading(symbols=None):
             except Exception:
                 pass # Ignore file read errors momentarily
             
+            # Check if enabled for this cycle
+            trading_is_enabled = CONFIG.get('trading_enabled', False)
+            
+            if not trading_is_enabled:
+                logger.info("[INFO] Trading Execution is DISABLED. Waiting for switch to be ENABLED...")
+            
             for symbol in active_symbols:
                 try:
                     # 1. Update daily loss stats for this symbol
                     _monitor_closed_trades(symbol)
                     
-                    # 2. Run trading logic for this symbol
-                    live_run_once(symbol)
+                    # 2. Run trading logic for this symbol ONLY if trading is enabled
+                    if trading_is_enabled:
+                        live_run_once(symbol)
                     
                 except Exception as e:
                     logger.error(f"Error processing {symbol}: {e}")
                 
                 # Small pause between symbols to not hammer CPU/API
-                time.sleep(1)
+                if trading_is_enabled:
+                    time.sleep(1)
                 
             # Sleep until next cycle
             # 60s is standard for M1/M5+ based bots checking once per bar or minute

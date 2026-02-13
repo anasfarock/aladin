@@ -13,23 +13,105 @@ from config import CONFIG
 ctk.set_appearance_mode("Dark")  # Modes: "System" (standard), "Dark", "Light"
 ctk.set_default_color_theme("blue")  # Themes: "blue" (standard), "green", "dark-blue"
 
+class SymbolSelector(ctk.CTkFrame):
+    def __init__(self, master, symbols_list, selected_symbols=None, update_callback=None, **kwargs):
+        super().__init__(master, **kwargs)
+        
+        self.symbols_list = symbols_list
+        self.selected_symbols = set(selected_symbols) if selected_symbols else set()
+        self.checkboxes = {}
+        self.update_callback = update_callback
+        
+        # Search Bar
+        self.search_var = tk.StringVar()
+        self.search_var.trace("w", self.update_list)
+        self.search_entry = ctk.CTkEntry(self, placeholder_text="Search Symbols...", textvariable=self.search_var)
+        self.search_entry.pack(fill="x", padx=5, pady=5)
+        
+        # Select All / None
+        self.btn_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.btn_frame.pack(fill="x", padx=5, pady=2)
+        ctk.CTkButton(self.btn_frame, text="All", width=60, height=24, command=self.select_all).pack(side="left", padx=2)
+        ctk.CTkButton(self.btn_frame, text="None", width=60, height=24, command=self.deselect_all).pack(side="left", padx=2)
+        
+        # Scrollable Area
+        self.scroll_frame = ctk.CTkScrollableFrame(self, height=200)
+        self.scroll_frame.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        self.update_list()
+        
+    def update_list(self, *args):
+        # Clear current checkboxes
+        for cb in self.checkboxes.values():
+            cb.destroy()
+        self.checkboxes.clear()
+        
+        search_term = self.search_var.get().lower()
+        
+        for symbol in self.symbols_list:
+            if search_term in symbol.lower():
+                var = ctk.BooleanVar(value=symbol in self.selected_symbols)
+                cb = ctk.CTkCheckBox(
+                    self.scroll_frame, 
+                    text=symbol, 
+                    variable=var,
+                    command=lambda s=symbol, v=var: self.toggle_symbol(s, v)
+                )
+                cb.pack(anchor="w", pady=2)
+                self.checkboxes[symbol] = cb
+
+    def toggle_symbol(self, symbol, var):
+        if var.get():
+            self.selected_symbols.add(symbol)
+        else:
+            self.selected_symbols.discard(symbol)
+        if self.update_callback:
+            self.update_callback()
+            
+    def select_all(self):
+        search_term = self.search_var.get().lower()
+        for symbol, cb in self.checkboxes.items():
+            if search_term in symbol.lower():
+                cb.select()
+                self.selected_symbols.add(symbol)
+        if self.update_callback:
+            self.update_callback()
+    
+    def deselect_all(self):
+        search_term = self.search_var.get().lower()
+        for symbol, cb in self.checkboxes.items():
+            if search_term in symbol.lower():
+                cb.deselect()
+                self.selected_symbols.discard(symbol)
+        if self.update_callback:
+            self.update_callback()
+
+    def get_selected(self):
+        return list(self.selected_symbols)
+
 class AladinGUI(ctk.CTk):
     def __init__(self):
         super().__init__()
 
         self.title("Aladin Trading Bot Control Panel")
-        self.geometry("1100x800")
+        self.geometry("1100x850")
 
         # Bot Process
         self.bot_process = None
         self.is_running = False
         self.log_queue = queue.Queue()
+        
+        # Symbol Selector Reference
+        self.symbol_selector = None
 
         self.create_widgets()
         self.load_current_config_to_ui()
         
         # Start log updater
         self.after(100, self.update_logs)
+        
+        # Auto-fetch symbols on startup (delayed slightly to let UI render)
+        self.after(500, lambda: threading.Thread(target=self.fetch_symbols_from_mt5, daemon=True).start())
 
     def create_widgets(self):
         # Configure grid layout (1x2)
@@ -39,25 +121,37 @@ class AladinGUI(ctk.CTk):
         # Sidebar setup
         self.sidebar_frame = ctk.CTkFrame(self, width=200, corner_radius=0)
         self.sidebar_frame.grid(row=0, column=0, sticky="nsew")
-        self.sidebar_frame.grid_rowconfigure(4, weight=1)
+        self.sidebar_frame.grid_rowconfigure(6, weight=1)
 
         self.logo_label = ctk.CTkLabel(self.sidebar_frame, text="Aladin Bot", font=ctk.CTkFont(size=20, weight="bold"))
         self.logo_label.grid(row=0, column=0, padx=20, pady=(20, 10))
 
         # Status Label
-        self.status_label = ctk.CTkLabel(self.sidebar_frame, text="Status: STOPPED", text_color="red")
+        self.status_label = ctk.CTkLabel(self.sidebar_frame, text="Bot Status: STOPPED", text_color="red")
         self.status_label.grid(row=1, column=0, padx=20, pady=10)
 
         # Control Buttons
-        self.start_button = ctk.CTkButton(self.sidebar_frame, text="Start Bot", command=self.start_bot, fg_color="green", hover_color="darkgreen")
+        self.start_button = ctk.CTkButton(self.sidebar_frame, text="Start Bot Process", command=self.start_bot, fg_color="green", hover_color="darkgreen")
         self.start_button.grid(row=2, column=0, padx=20, pady=10)
 
-        self.stop_button = ctk.CTkButton(self.sidebar_frame, text="Stop Bot", command=self.stop_bot, fg_color="darkred", hover_color="red", state="disabled")
+        self.stop_button = ctk.CTkButton(self.sidebar_frame, text="Stop Bot Process", command=self.stop_bot, fg_color="darkred", hover_color="red", state="disabled")
         self.stop_button.grid(row=3, column=0, padx=20, pady=10)
+        
+        # Trading Toggle Switch
+        ctk.CTkLabel(self.sidebar_frame, text="Trading Execution:", font=ctk.CTkFont(size=12, weight="bold")).grid(row=4, column=0, padx=20, pady=(20,0))
+        self.trading_switch = ctk.CTkSwitch(self.sidebar_frame, text="DISABLED", command=self.toggle_trading, onvalue="ENABLED", offvalue="DISABLED")
+        self.trading_switch.grid(row=5, column=0, padx=20, pady=10)
+        # Default to Config state
+        if CONFIG.get('trading_enabled', False):
+            self.trading_switch.select()
+            self.trading_switch.configure(text="ENABLED")
+        else:
+            self.trading_switch.deselect()
+            self.trading_switch.configure(text="DISABLED")
         
         # Save Config Button
         self.save_button = ctk.CTkButton(self.sidebar_frame, text="Save Config", command=self.save_config)
-        self.save_button.grid(row=5, column=0, padx=20, pady=10)
+        self.save_button.grid(row=7, column=0, padx=20, pady=10)
 
         # Main Content Area (Tabs)
         self.tabview = ctk.CTkTabview(self)
@@ -120,21 +214,126 @@ class AladinGUI(ctk.CTk):
         return checkbox
 
     def create_trading_inputs(self, parent):
-        self.create_input_row(parent, "Symbol:", 'symbol', 0, str)
-        self.create_input_row(parent, "Entry Timeframe:", 'timeframe_entry', 1, str)
+        # Multi-Symbol Selection
+        ctk.CTkLabel(parent, text="Trading Pairs", font=ctk.CTkFont(weight="bold")).grid(row=0, column=0, columnspan=2, sticky="w", padx=10)
         
-        ctk.CTkLabel(parent, text="Trend Analysis").grid(row=2, column=0, pady=(10,0), sticky="w")
+        # Selected symbols display
+        self.selected_symbols_label = ctk.CTkLabel(parent, text="Selected: None", wraplength=400, justify="left", text_color="gray")
+        self.selected_symbols_label.grid(row=1, column=0, columnspan=2, sticky="w", padx=10)
         
-        self.create_checkbox_row(parent, "Use Manual Trend Override", 'use_manual_trend', 3)
-        self.create_input_row(parent, "Manual Trend (bullish/bearish):", 'manual_trend', 4, str)
+        # Container for selector
+        self.selector_frame = ctk.CTkFrame(parent)
+        self.selector_frame.grid(row=2, column=0, columnspan=2, padx=10, pady=5, sticky="ew")
         
-        self.create_checkbox_row(parent, "Use Moving Averages", 'use_ma_for_trend', 5)
-        self.create_checkbox_row(parent, "Use RSI", 'use_rsi_for_trend', 6)
-        self.create_checkbox_row(parent, "Use VWAP", 'use_vwap_for_trend', 7)
-        self.create_checkbox_row(parent, "Use Bollinger Bands", 'use_bollinger_for_trend', 8)
+        self.selector_status = ctk.CTkLabel(self.selector_frame, text="Initializing MT5 connection...")
+        self.selector_status.pack()
         
-        self.create_input_row(parent, "Bullish Threshold:", 'trend_bullish_threshold', 9, int)
-        self.create_input_row(parent, "Bearish Threshold:", 'trend_bearish_threshold', 10, int)
+        # Fetch Button (Manual refresh if needed)
+        self.fetch_btn = ctk.CTkButton(self.selector_frame, text="Refresh Symbols", command=lambda: threading.Thread(target=self.fetch_symbols_from_mt5, daemon=True).start())
+        self.fetch_btn.pack(pady=5)
+        
+        # Placeholder for the actual list
+        self.symbols_container = ctk.CTkFrame(self.selector_frame, fg_color="transparent")
+        self.symbols_container.pack(fill="both", expand=True)
+
+        # Other inputs
+        self.create_input_row(parent, "Entry Timeframe:", 'timeframe_entry', 3, str)
+        
+        ctk.CTkLabel(parent, text="Trend Analysis").grid(row=4, column=0, pady=(10,0), sticky="w")
+        
+        self.create_checkbox_row(parent, "Use Manual Trend Override", 'use_manual_trend', 5)
+        self.create_input_row(parent, "Manual Trend (bullish/bearish):", 'manual_trend', 6, str)
+        
+        self.create_checkbox_row(parent, "Use Moving Averages", 'use_ma_for_trend', 7)
+        self.create_checkbox_row(parent, "Use RSI", 'use_rsi_for_trend', 8)
+        self.create_checkbox_row(parent, "Use VWAP", 'use_vwap_for_trend', 9)
+        self.create_checkbox_row(parent, "Use Bollinger Bands", 'use_bollinger_for_trend', 10)
+        
+        self.create_input_row(parent, "Bullish Threshold:", 'trend_bullish_threshold', 11, int)
+        self.create_input_row(parent, "Bearish Threshold:", 'trend_bearish_threshold', 12, int)
+
+    def fetch_symbols_from_mt5(self):
+        """Connect to MT5 and fetch all symbols"""
+        try:
+            # Update UI from thread safe way
+            self.selector_status.configure(text="Connecting to MT5...")
+            self.fetch_btn.configure(state="disabled")
+            
+            import MetaTrader5 as mt5
+            
+            if not mt5.initialize():
+                err = mt5.last_error()
+                self.log_message(f"MT5 Init failed: {err}")
+                self.selector_status.configure(text=f"Connection Failed: {err}")
+                self.fetch_btn.configure(state="normal")
+                return
+                
+            symbols_info = mt5.symbols_get()
+            if symbols_info:
+                symbols_list = [s.name for s in symbols_info]
+                symbols_list.sort()
+                
+                # Update UI in main thread
+                self.after(0, lambda: self._update_selector_ui(symbols_list))
+                # self.log_message(f"Successfully loaded {len(symbols_list)} symbols from MT5")
+            else:
+                 self.log_message("No symbols found in MT5")
+                 self.selector_status.configure(text="No symbols found")
+                 
+            mt5.shutdown()
+            
+        except Exception as e:
+            self.log_message(f"Error fetching symbols: {e}")
+            self.selector_status.configure(text="Error fetching symbols")
+        finally:
+            self.fetch_btn.configure(state="normal")
+
+    def _update_selector_ui(self, symbols_list):
+        # Create Selector
+        current_selected = CONFIG.get('symbols', [])
+        if not current_selected and CONFIG.get('symbol'):
+            current_selected = [CONFIG['symbol']]
+        
+        # Check for cached selector to update or create new
+        if self.symbol_selector:
+            self.symbol_selector.destroy()
+        
+        self.symbol_selector = SymbolSelector(
+            self.symbols_container, 
+            symbols_list, 
+            current_selected,
+            update_callback=self.update_selected_label
+        )
+        self.symbol_selector.pack(fill="both", expand=True)
+        self.selector_status.configure(text=f"Loaded {len(symbols_list)} symbols")
+        self.update_selected_label()
+
+    def update_selected_label(self):
+        if self.symbol_selector:
+            selected = self.symbol_selector.get_selected()
+            text = ", ".join(selected)
+            if not text:
+                text = "None"
+            self.selected_symbols_label.configure(text=f"Selected: {text}")
+
+    def toggle_trading(self):
+        """Toggle trading logic"""
+        is_enabled = self.trading_switch.get() == "ENABLED"
+        self.trading_switch.configure(text="ENABLED" if is_enabled else "DISABLED")
+        
+        # Update Config immediately
+        CONFIG['trading_enabled'] = is_enabled
+        self.save_config_silent()
+        
+        status = "ENABLED" if is_enabled else "DISABLED"
+        self.log_message(f"Trading Execution {status}")
+
+    def save_config_silent(self):
+        """Save config without popup (for toggle)"""
+        try:
+            self.save_config(silent=True)
+        except Exception as e:
+            self.log_message(f"Error saving config: {e}")
 
     def create_risk_inputs(self, parent):
         self.create_input_row(parent, "Capital:", 'capital', 0, float)
@@ -195,8 +394,18 @@ class AladinGUI(ctk.CTk):
                 else:
                     widget.delete(0, tk.END)
                     widget.insert(0, str(value))
+        
+        # Load Symbols if we have a selector (usually not until fetch, but we can init if list exists)
+        current_symbols = CONFIG.get('symbols', [])
+        if not current_symbols and CONFIG.get('symbol'):
+             current_symbols = [CONFIG['symbol']]
+             
+        if current_symbols:
+            txt = ", ".join(current_symbols)
+            if hasattr(self, 'selected_symbols_label'):
+                self.selected_symbols_label.configure(text=f"Selected: {txt}")
 
-    def save_config(self):
+    def save_config(self, silent=False):
         """Save UI values to config.json"""
         new_config = {}
         error_fields = []
@@ -219,44 +428,45 @@ class AladinGUI(ctk.CTk):
             except ValueError:
                 error_fields.append(key)
         
+        # Get Symbols
+        if self.symbol_selector:
+            selected_symbols = self.symbol_selector.get_selected()
+            if selected_symbols:
+                 new_config['symbols'] = selected_symbols
+                 # Update backwards compat 'symbol'
+                 new_config['symbol'] = selected_symbols[0]
+            else:
+                 if not silent: self.log_message("Warning: No symbols selected!")
+        
+        # Get Trading Toggle state
+        if hasattr(self, 'trading_switch'):
+             new_config['trading_enabled'] = (self.trading_switch.get() == "ENABLED")
+
         if error_fields:
-            self.log_message(f"Error saving: Invalid values for {', '.join(error_fields)}")
+            if not silent: self.log_message(f"Error saving: Invalid values for {', '.join(error_fields)}")
             return
             
-        # Preserve keys that are not in UI but are in CONFIG (like api keys loaded from env or secrets)
-        # Actually CONFIG has everything. We just merge.
-        # But we need to handle nested dicts (trailing_levels).
-        # For this simple GUI, we are not editing trailing_levels yet.
-        # So we should be careful not to overwrite them with nothing if we were recreating the whole dict.
-        # But we are creating a partial dict `new_config` containing only UI fields.
-        
-        # We should merge with existing CONFIG to ensure we don't lose non-UI settings when writing to file?
-        # Ideally, we only save what we changed or save everything that is legally JSON-able.
-        
-        # Let's save a clean dict of ALL current config + updates.
-        # IMPORTANT: We need to handle `trailing_levels` which is a dict with float keys.
-        # JSON only supports string keys.
-        
-        config_to_save = CONFIG.copy()
-        config_to_save.update(new_config)
-        
-        # Serialize dict keys for JSON
-        if 'trailing_levels' in config_to_save:
-            # We don't have UI for this yet, so it stays as is in CONFIG
-            # But to save to JSON, keys must be strings.
-            # config.py reload logic handles string keys back to float.
-            pass
-            
         try:
-            with open('config.json', 'w') as f:
-                json.dump(config_to_save, f, indent=4)
-            self.log_message("Configuration saved successfully to config.json")
-            
-            # Update the global CONFIG in memory too, so if we run the bot, it has latest
+            # Update global CONFIG
             CONFIG.update(new_config)
             
+            # Write to file
+            # Handle special types if needed
+            config_to_save = new_config.copy()
+            # We want to keep existing config keys that are not in UI
+            # But the simplest way here assuming CONFIG has everything loaded is:
+            # actually we should be careful. CONFIG might have everything from file.
+            # let's just use updated CONFIG
+            
+            # But keys in CONFIG might be python objects (not likely here, just basic types)
+            
+            with open('config.json', 'w') as f:
+                json.dump(config_to_save, f, indent=4)
+            
+            if not silent: self.log_message("Configuration saved successfully to config.json")
+            
         except Exception as e:
-            self.log_message(f"Failed to save config: {e}")
+            if not silent: self.log_message(f"Failed to save config: {e}")
 
     def start_bot(self):
         if self.is_running:
@@ -272,7 +482,6 @@ class AladinGUI(ctk.CTk):
         self.log_message("\n--- STARTING BOT ---\n")
         
         # Run main.py with --live argument
-        # We don't need to pass all args because main.py loads config.json now!
         cmd = [sys.executable, "-u", "main.py", "--live"]
         
         try:
@@ -310,15 +519,9 @@ class AladinGUI(ctk.CTk):
         
         # Send SIGTERM/SIGINT
         if os.name == 'nt':
-            # Windows: use taskkill to be sure, or simply terminate
-            # subprocess.terminate() on windows is essentially kill
-            # But we used CREATE_NEW_PROCESS_GROUP, so we should send formatted signal if possible
-            # bot_process.terminate() is usually enough.
             self.bot_process.terminate()
         else:
             self.bot_process.terminate()
-            
-        # UI cleanup happens in monitor_process when it detects exit
 
     def stop_bot_ui_cleanup(self):
         self.is_running = False
@@ -326,6 +529,9 @@ class AladinGUI(ctk.CTk):
         self.start_button.configure(state="normal")
         self.stop_button.configure(state="disabled", fg_color="gray")
         self.status_label.configure(text="Status: STOPPED", text_color="red")
+        
+        # Disable trading switch visually if we wanted, but logic says config stays enabled?
+        # User might want to keep it enabled for next run.
 
     def monitor_process(self):
         if self.bot_process:
