@@ -230,6 +230,19 @@ class AladinGUI(ctk.CTk):
         self.inputs[config_key] = {'entry': option_menu, 'type': str}
         return option_menu
 
+    def create_segmented_row(self, parent, label_text, config_key, row, options):
+        label = ctk.CTkLabel(parent, text=label_text, anchor="w")
+        label.grid(row=row, column=0, padx=10, pady=5, sticky="w")
+        
+        seg_button = ctk.CTkSegmentedButton(parent, values=options)
+        seg_button.grid(row=row, column=1, padx=10, pady=5, sticky="w")
+        
+        if not hasattr(self, 'inputs'):
+            self.inputs = {}
+        
+        self.inputs[config_key] = {'entry': seg_button, 'type': str}
+        return seg_button
+
     def create_trading_inputs(self, parent):
         # Multi-Symbol Selection
         ctk.CTkLabel(parent, text="Trading Pairs", font=ctk.CTkFont(weight="bold")).grid(row=0, column=0, columnspan=2, sticky="w", padx=10)
@@ -254,7 +267,7 @@ class AladinGUI(ctk.CTk):
         self.symbols_container.pack(fill="both", expand=True)
 
         # Other inputs
-        self.create_input_row(parent, "Entry Timeframe:", 'timeframe_entry', 3, str)
+        self.create_segmented_row(parent, "Entry Timeframe:", 'timeframe_entry', 3, ['M1', 'M5', 'M15', 'M30', 'H1', 'H4'])
         
         ctk.CTkLabel(parent, text="Trend Analysis").grid(row=4, column=0, pady=(10,0), sticky="w")
         
@@ -423,6 +436,8 @@ class AladinGUI(ctk.CTk):
                 type_cast = info['type']
                 
                 if isinstance(widget, ctk.CTkOptionMenu):
+                     widget.set(str(value))
+                elif isinstance(widget, ctk.CTkSegmentedButton):
                      widget.set(str(value))
                 elif type_cast == bool:
                     if value:
