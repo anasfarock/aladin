@@ -3,8 +3,10 @@ Configuration Module for Aladin - MT5 Trading Bot
 Updated with Point-Based Trend System, Manual Trend Override, Fundamental Analysis, and ADX
 """
 
+
 import logging
 import os
+import json
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -214,6 +216,32 @@ CONFIG = {
     'show_macro_divergence_warnings': True,
     'verbose_adx_analysis': True,
 }
+
+# Load config.json if exists to override defaults
+config_json_path = os.path.join(os.path.dirname(__file__), 'config.json')
+if os.path.exists(config_json_path):
+    try:
+        with open(config_json_path, 'r') as f:
+            saved_config = json.load(f)
+            # Update CONFIG with saved values
+            # Note: This performs a shallow update. For nested dictionaries like 'trailing_levels',
+            # the entire dictionary will be replaced if present in the JSON.
+            CONFIG.update(saved_config)
+            
+        # Ensure numeric keys in trailing_levels are converted back to floats (JSON keys are strings)
+        if 'trailing_levels' in saved_config:
+            try:
+                # Convert string keys "1.0" back to float 1.0
+                new_trailing_levels = {}
+                for k, v in saved_config['trailing_levels'].items():
+                    new_trailing_levels[float(k)] = float(v)
+                CONFIG['trailing_levels'] = new_trailing_levels
+            except Exception as e:
+                logger.warning(f"Error parsing trailing_levels from JSON: {e}")
+                
+        logger.info(f"Loaded configuration from {config_json_path}")
+    except Exception as e:
+        logger.error(f"Error loading config.json: {e}")
 
 def get_mt5_timeframes():
     """
