@@ -6,6 +6,7 @@ from risk_management import (
     # ... existing imports ...
     initialize_daily_loss_tracker  # <-- ADD THIS
 )
+import json # For config reloading
 import time
 import logging
 from datetime import datetime  # <-- ADD THIS LINE
@@ -119,7 +120,7 @@ def _check_macro_filter(symbol, technical_trend, macro_analysis):
     aligned = (macro_direction == technical_trend or macro_direction == 'neutral')
     
     if not aligned and CONFIG['show_macro_divergence_warnings']:
-        logger.warning("⚠️  MACRO/TECHNICAL DIVERGENCE DETECTED")
+        logger.warning("[!]  MACRO/TECHNICAL DIVERGENCE DETECTED")
         logger.warning(f"    Technical Trend: {technical_trend.upper()}")
         logger.warning(f"    Macro Direction: {macro_direction.upper()}")
         logger.warning(f"    Macro Confidence: {macro_confidence:.1f}%")
@@ -199,10 +200,10 @@ def _check_adx_filter(adx_dataframes_dict, trend):
     
     if primary_adx['adx_value'] < threshold:
         should_skip = True
-        reason = f"⛔ {primary_tf} ADX too weak ({primary_adx['adx_value']:.2f} < {threshold}) - Market ranging"
+        reason = f"[!] {primary_tf} ADX too weak ({primary_adx['adx_value']:.2f} < {threshold}) - Market ranging"
     else:
         should_skip = False
-        reason = f"✓ ADX confirms trend strength ({primary_tf} ADX: {primary_adx['adx_value']:.2f})"
+        reason = f"[OK] ADX confirms trend strength ({primary_tf} ADX: {primary_adx['adx_value']:.2f})"
     
     return {
         'pass_filter': not should_skip,
@@ -287,7 +288,7 @@ def _monitor_closed_trades(symbol):
             # Log detailed info about the loss
             logger.info(f"")
             logger.info(f"{'='*70}")
-            logger.info(f"📊 CLOSED POSITION - LOSS RECORDED")
+            logger.info(f"[-] CLOSED POSITION - LOSS RECORDED")
             logger.info(f"{'='*70}")
             logger.info(f"  Symbol: {deal.symbol}")
             logger.info(f"  Deal Ticket: {deal.ticket}")
@@ -416,14 +417,14 @@ def live_run_once(symbol):
     # ===== CHECK 3: PER-SYMBOL MAX POSITIONS =====
     symbol_limit_reached, current_count, max_allowed = check_max_positions_reached_for_symbol(symbol)
     if symbol_limit_reached:
-        logger.warning(f"3️⃣  Per-Symbol Position Limit: ⛔ BLOCKED")
+        logger.warning(f"[3]  Per-Symbol Position Limit: BLOCKED")
         logger.warning(f"   {symbol}: {current_count}/{max_allowed} trades (limit reached)")
         logger.info("="*70)
         return None
-    logger.info(f"3️⃣  Per-Symbol Position Limit: ✓ OK ({current_count}/{max_allowed} on {symbol})")
+    logger.info(f"[3]  Per-Symbol Position Limit: OK ({current_count}/{max_allowed} on {symbol})")
     
     logger.info("="*70)
-    logger.info("✓ ALL PRE-TRADE CHECKS PASSED - Proceeding with analysis")
+    logger.info("[OK] ALL PRE-TRADE CHECKS PASSED - Proceeding with analysis")
     logger.info("="*70)
     
     # Monitor existing positions
@@ -501,7 +502,7 @@ def live_run_once(symbol):
             logger.info(f"Alignment: {macro_filter['reason']}")
             
             if macro_filter['should_skip']:
-                logger.warning(f"\n⛔ TRADE SKIPPED: {macro_filter['reason']}")
+                logger.warning(f"\n[!] TRADE SKIPPED: {macro_filter['reason']}")
                 return None
         
         logger.info("="*70)
@@ -547,7 +548,7 @@ def live_run_once(symbol):
         
         # Display entry signal
         logger.info("="*70)
-        logger.info(f"🎯 FIBONACCI ENTRY SIGNAL DETECTED")
+        logger.info(f"[*] FIBONACCI ENTRY SIGNAL DETECTED")
         logger.info("="*70)
         logger.info(f"Signal Type: {signal_type.upper()}")
         logger.info(f"Setup: {fib_setup['type']}")
@@ -699,12 +700,17 @@ def live_run_once(symbol):
         logger.info(f"  Risk/Reward: 1:{CONFIG['min_rr_ratio']}")
         
         # Place order
+        if not CONFIG.get('trading_enabled', False):
+            logger.info(f"⚠️  Trading DISABLED in Config - Skipping Execution")
+            logger.info(f"   Would have placed: {side.upper()} {volume} lots @ {entry_approx:.5f}")
+            return None
+            
         logger.info("\n📤 Placing market order...")
         result = place_market_order(symbol, side, volume, stop_price, tp_price)
         
         if result and result.retcode == 10009:
             logger.info("="*70)
-            logger.info(f"✅ TRADE EXECUTED SUCCESSFULLY!")
+            logger.info(f"[+] TRADE EXECUTED SUCCESSFULLY!")
             logger.info("="*70)
             logger.info(f"  Order ID: {result.order}")
             logger.info(f"  Deal ID: {result.deal}")
@@ -724,21 +730,28 @@ def live_run_once(symbol):
     except Exception as e:
         logger.error(f"Error in live trading cycle: {e}", exc_info=True)
         return None
-def start_live_trading(symbol=None):
+def start_live_trading(symbols=None):
     """
     Start the live trading bot with ADX, ATR stops, and macro analysis
+    Supports MULTI-SYMBOL trading
     """
     if not MT5_AVAILABLE:
         logger.error("MetaTrader5 not available. Cannot start live trading.")
         return
     
-    if symbol is None:
-        symbol = CONFIG['symbol']
+    # Handle symbols argument
+    if symbols is None:
+        symbols = CONFIG.get('symbols', [CONFIG.get('symbol', 'USDCAD')])
+    elif isinstance(symbols, str):
+        symbols = [symbols]
+    
+    # Ensure items are strings and unique
+    active_symbols = sorted(list(set([str(s) for s in symbols])))
     
     logger.info("="*60)
     logger.info("ICT FIBONACCI LIVE TRADING BOT")
     logger.info("="*60)
-    logger.info(f"Symbol: {symbol}")
+    logger.info(f"Active Symbols ({len(active_symbols)}): {', '.join(active_symbols)}")
     logger.info(f"Entry Timeframe: {CONFIG['timeframe_entry']}")
     logger.info(f"Trend Timeframes: {', '.join(CONFIG['trend_timeframes'])}")
     
@@ -752,39 +765,39 @@ def start_live_trading(symbol=None):
     
     # Display ADX status
     if CONFIG.get('use_adx_filter', False):
-        logger.info(f"\n✓ ADX FILTER: ENABLED")
+        logger.info(f"\n[+] ADX FILTER: ENABLED")
         logger.info(f"   ADX Timeframes: {', '.join(CONFIG['adx_timeframes'])}")
         logger.info(f"   Strength Threshold: {CONFIG['adx_strength_threshold']}")
     else:
-        logger.info(f"\n🔇 ADX FILTER: DISABLED")
+        logger.info(f"\n[-] ADX FILTER: DISABLED")
     
     # Display ATR stops status
     if CONFIG.get('use_atr_stops', False):
-        logger.info(f"\n💰 ATR STOPS: ENABLED")
+        logger.info(f"\n[+] ATR STOPS: ENABLED")
         logger.info(f"   Multiplier: {CONFIG['atr_stop_multiplier']}x")
         logger.info(f"   Method: {CONFIG['atr_stop_method'].upper()}")
     else:
-        logger.info(f"\n💰 ATR STOPS: DISABLED (using Fibonacci stops)")
+        logger.info(f"\n[-] ATR STOPS: DISABLED (using Fibonacci stops)")
     
     # Display macro analysis status
     if CONFIG['use_fundamental_analysis'] or CONFIG['use_sentiment_analysis']:
         logger.info("")
         if F_ANALYSIS_AVAILABLE:
-            logger.info("🌍 MACRO ANALYSIS: ENABLED")
+            logger.info("[+] MACRO ANALYSIS: ENABLED")
             if CONFIG['use_macro_filter']:
                 logger.info(f"   Filter Mode: ACTIVE (skip trades against strong macro)")
             else:
                 logger.info(f"   Filter Mode: INFO ONLY (no trade skipping)")
         else:
-            logger.warning("⚠️  Macro analysis requested but f_analysis not available")
+            logger.warning("[!] Macro analysis requested but f_analysis not available")
     
     # Display position limits
-    logger.info(f"\n🛡️  POSITION & LOSS LIMITS:")
+    logger.info(f"\n[!] POSITION & LOSS LIMITS:")
     logger.info(f"   Max Concurrent Trades (Global): {CONFIG['max_concurrent_trades']}")
     logger.info(f"   Max Concurrent Trades (Per Symbol): {CONFIG['max_concurrent_trades_of_same_pair']}")
     
     # Display daily loss limits
-    logger.info(f"\n💸 DAILY LOSS LIMITS:")
+    logger.info(f"\n[!] DAILY LOSS LIMITS:")
     if CONFIG['max_daily_losses'] > 0:
         logger.info(f"   Max Daily Loss (Account): ${CONFIG['max_daily_losses']:.2f}")
     else:
@@ -801,56 +814,63 @@ def start_live_trading(symbol=None):
         logger.info(f"   Max Daily Loss (Per Symbol): UNLIMITED")
     
     if CONFIG['max_daily_loss_count_per_symbol'] > 0:
-        logger.info(f"   Max Daily Loss Count (Per Symbol): {CONFIG['max_daily_loss_count_per_symbol']} trades")
+        logger.info(f"   Max Daily Loss (Per Symbol Count): {CONFIG['max_daily_loss_count_per_symbol']} trades")
     else:
-        logger.info(f"   Max Daily Loss Count (Per Symbol): UNLIMITED")
+        logger.info(f"   Max Daily Loss (Per Symbol Count): UNLIMITED")
     
-    logger.info("="*60)
+    logger.info("="*60 + "\n")
     
     try:
         connect_mt5()
-        logger.info("✓ Connected to MetaTrader5")
         
-        balance = get_account_balance()
-        logger.info(f"✓ Account Balance: ${balance:.2f}")
+        # Initialize daily loss tracker
+        initialize_daily_loss_tracker()
         
-        initialize_daily_loss_tracker()  # Load today's losses from MT5 history
-        
-        logger.info("\n🤖 Bot is now running...")
-        logger.info("Press Ctrl+C to stop\n")
-        
-        cycle_count = 0
+        logger.info(f"Waiting for next candle close... (checking every 60s)")
         
         while True:
-            cycle_count += 1
-            logger.info(f"\n--- Trading Cycle {cycle_count} ---")
-            logger.info(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            # Monitor closed trades for ALL symbols we are tracking
+            # We also check for global account history generally
+            # But the function takes a symbol argument.
+            # We should probably check all active symbols
             
-            # Monitor closed trades BEFORE checking limits
-            _monitor_closed_trades(symbol)
-            
+            # Reload config dynamically to check trading_enabled status
             try:
-                live_run_once(symbol)
-            except Exception as e:
-                logger.error(f"Error in trading cycle: {e}", exc_info=True)
+                import json
+                if os.path.exists('config.json'):
+                    with open('config.json', 'r') as f:
+                        new_conf = json.load(f)
+                        if 'trading_enabled' in new_conf:
+                            current_status = new_conf['trading_enabled']
+                            if current_status != CONFIG.get('trading_enabled'):
+                                logger.info(f"STATUS CHANGE: Trading is now {'ENABLED' if current_status else 'DISABLED'}")
+                            CONFIG['trading_enabled'] = current_status
+            except Exception:
+                pass # Ignore file read errors momentarily
             
-            # Log daily loss summary periodically
-            if cycle_count % 24 == 0:  # Every 24 cycles
-                log_daily_loss_summary()
-            
-            logger.debug(f"Waiting 60 seconds before next cycle...")
+            for symbol in active_symbols:
+                try:
+                    # 1. Update daily loss stats for this symbol
+                    _monitor_closed_trades(symbol)
+                    
+                    # 2. Run trading logic for this symbol
+                    live_run_once(symbol)
+                    
+                except Exception as e:
+                    logger.error(f"Error processing {symbol}: {e}")
+                
+                # Small pause between symbols to not hammer CPU/API
+                time.sleep(1)
+                
+            # Sleep until next cycle
+            # 60s is standard for M1/M5+ based bots checking once per bar or minute
             time.sleep(60)
-    
+            
     except KeyboardInterrupt:
-        logger.info("\n\n⚠️  Keyboard interrupt detected")
-        logger.info("Stopping bot...")
-    
+        logger.info("Stopping...")
     except Exception as e:
         logger.error(f"Fatal error: {e}", exc_info=True)
-    
     finally:
         disconnect_mt5()
-        logger.info("✓ Disconnected from MetaTrader5")
-        logger.info("Bot stopped.")
 if __name__ == '__main__':
     start_live_trading()

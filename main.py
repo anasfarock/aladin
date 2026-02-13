@@ -97,7 +97,8 @@ Examples:
     parser.add_argument(
         '--symbol',
         type=str,
-        help=f'Trading symbol (default: {CONFIG["symbol"]})'
+        nargs='+', # Accept one or more arguments
+        help=f'Trading symbol(s) (default: {CONFIG["symbol"]})'
     )
     
     parser.add_argument(
@@ -285,7 +286,12 @@ def update_config_from_args(args):
         CONFIG['backtest'] = False
     
     if args.symbol:
-        CONFIG['symbol'] = args.symbol
+        if isinstance(args.symbol, list):
+            CONFIG['symbols'] = args.symbol
+            CONFIG['symbol'] = args.symbol[0] # Backwards compat
+        else:
+            CONFIG['symbol'] = args.symbol
+            CONFIG['symbols'] = [args.symbol]
     
     if args.start:
         CONFIG['start'] = args.start
@@ -443,19 +449,19 @@ def main():
     
     # Display configuration summary
     print(f"\n{'='*70}")
-    print("⚙️  CONFIGURATION SUMMARY")
+    print("##  CONFIGURATION SUMMARY")
     print(f"{'='*70}")
     
     if CONFIG.get('use_manual_trend', False):
-        print(f"🎯 Trend Mode: MANUAL ({CONFIG['manual_trend'].upper()})")
+        print(f"-> Trend Mode: MANUAL ({CONFIG['manual_trend'].upper()})")
     else:
-        print(f"📊 Trend Mode: AUTOMATIC (Point-Based System)")
+        print(f"-> Trend Mode: AUTOMATIC (Point-Based System)")
     
     print(f"Trend Timeframes: {', '.join(CONFIG['trend_timeframes'])}")
     
     # Display ADX configuration
     if CONFIG.get('use_adx_filter', False):
-        print(f"\n✓ ADX FILTER: ENABLED")
+        print(f"\n[+] ADX FILTER: ENABLED")
         print(f"   Timeframes: {', '.join(CONFIG['adx_timeframes'])}")
         print(f"   Period: {CONFIG['adx_period']}")
         print(f"   Strength Threshold: {CONFIG['adx_strength_threshold']}")
@@ -469,10 +475,10 @@ def main():
         else:
             print(f"   Manual Control: DISABLED (exact timeframe match only)")
     else:
-        print(f"\n🔇 ADX FILTER: DISABLED")
+        print(f"\n[-] ADX FILTER: DISABLED")
     
     if CONFIG['use_fundamental_analysis'] or CONFIG['use_sentiment_analysis']:
-        print("\n🌍 MACRO ANALYSIS MODULES:")
+        print("\n[+] MACRO ANALYSIS MODULES:")
         if CONFIG['use_fundamental_analysis']:
             modules = []
             if CONFIG['analyze_cot_reports']:
@@ -500,7 +506,7 @@ def main():
         else:
             print(f"   Filter: DISPLAY ONLY (no trade skipping)")
     else:
-        print("🔇 Macro Analysis: DISABLED")
+        print("[-] Macro Analysis: DISABLED")
     
     print(f"\nRisk per Trade: {CONFIG['risk_pct']}%")
     print(f"Min R:R Ratio: {CONFIG['min_rr_ratio']}")
@@ -509,7 +515,7 @@ def main():
 
     # Add to the configuration summary display:
     
-    print("\n📊 DAILY LOSS LIMITS:")
+    print("\n[!] DAILY LOSS LIMITS:")
     if CONFIG['max_daily_losses'] > 0:
         print(f"   Max Daily Loss: ${CONFIG['max_daily_losses']:.2f}")
     else:
@@ -549,7 +555,7 @@ def main():
         else:
             # Run live trading
             logger.info("Starting live trading mode...")
-            start_live_trading(CONFIG['symbol'])
+            start_live_trading(CONFIG.get('symbols', [CONFIG['symbol']]))
     
     except KeyboardInterrupt:
         logger.info("\nShutdown requested by user")

@@ -32,7 +32,9 @@ except Exception:
 # ----------------------------- CONFIG -----------------------------
 CONFIG = {
     # Trading Parameters
-    'symbol': 'USDCAD',
+    'symbol': 'USDCAD',  # Primary symbol (backwards compatibility)
+    'symbols': ['USDCAD'], # List of symbols to trade
+    'trading_enabled': False, # Master switch for trade execution
     'backtest': False,
     'start': '2025-11-13',
     'end': '2025-11-30',
@@ -278,6 +280,17 @@ def validate_config():
     if CONFIG['timeframe_entry'] not in MT5_TIMEFRAMES:
         raise ValueError(f"Unsupported entry timeframe: {CONFIG['timeframe_entry']}")
     
+    # Validate symbols list
+    if not CONFIG.get('symbols'):
+        # Fallback to single symbol if list empty
+        if CONFIG.get('symbol'):
+            CONFIG['symbols'] = [CONFIG['symbol']]
+        else:
+            raise ValueError("No trading symbols configured")
+            
+    if not isinstance(CONFIG['symbols'], list):
+        raise ValueError("symbols must be a list")
+    
     for tf in CONFIG['trend_timeframes']:
         if tf not in MT5_TIMEFRAMES:
             raise ValueError(f"Unsupported trend timeframe: {tf}")
@@ -305,6 +318,7 @@ def validate_config():
     if CONFIG['max_concurrent_trades_of_same_pair'] <= 0:
         raise ValueError("max_concurrent_trades_of_same_pair must be positive")
     
+    # Updated to check total list size if needed, but per-symbol limits handle most risk
     if CONFIG['max_concurrent_trades_of_same_pair'] > CONFIG['max_concurrent_trades']:
         raise ValueError(f"max_concurrent_trades_of_same_pair ({CONFIG['max_concurrent_trades_of_same_pair']}) "
                         f"cannot exceed max_concurrent_trades ({CONFIG['max_concurrent_trades']})")
