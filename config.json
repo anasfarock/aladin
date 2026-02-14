@@ -1,5 +1,5 @@
 {
-    "timeframe_entry": "M15",
+    "timeframe_entry": "M1",
     "use_manual_trend": false,
     "manual_trend": "bullish",
     "use_ma_for_trend": true,
@@ -44,13 +44,5 @@
     "max_daily_loss_count": 8,
     "max_daily_losses_per_symbol": -1.0,
     "max_daily_loss_count_per_symbol": 3,
-    "symbols": [
-        "AUDUSD",
-        "AUDCAD",
-        "EURUSD",
-        "USDCAD",
-        "XAUUSD"
-    ],
-    "symbol": "AUDUSD",
     "trading_enabled": true
 }
