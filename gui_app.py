@@ -165,6 +165,7 @@ class AladinGUI(ctk.CTk):
         self.tab_adx = self.tabview.add("ADX Filter")
         self.tab_macro = self.tabview.add("Macro")
         self.tab_loss_limits = self.tabview.add("Daily Limits")
+        self.tab_charts = self.tabview.add("Charts")
 
         # --- Dashboard Tab (Logs) ---
         self.tab_dashboard.grid_columnconfigure(0, weight=1)
@@ -191,6 +192,160 @@ class AladinGUI(ctk.CTk):
 
         # --- Daily Limits Tab ---
         self.create_limit_inputs(self.tab_loss_limits)
+
+        # --- Charts Tab ---
+        self.create_chart_tab(self.tab_charts)
+
+    def create_chart_tab(self, parent):
+        parent.grid_columnconfigure(0, weight=1)
+        parent.grid_rowconfigure(1, weight=1)
+        
+        # Controls Frame
+        controls = ctk.CTkFrame(parent)
+        controls.grid(row=0, column=0, sticky="ew", padx=10, pady=5)
+        
+        # Symbol Selector
+        ctk.CTkLabel(controls, text="Symbol:").pack(side="left", padx=5)
+        self.chart_symbol_var = ctk.StringVar(value=CONFIG.get('symbol', 'USDCAD'))
+        self.chart_symbol_menu = ctk.CTkOptionMenu(controls, variable=self.chart_symbol_var, values=CONFIG.get('symbols', ['USDCAD']))
+        self.chart_symbol_menu.pack(side="left", padx=5)
+        
+        # Timeframe Selector
+        ctk.CTkLabel(controls, text="Timeframe:").pack(side="left", padx=5)
+        self.chart_tf_var = ctk.StringVar(value=CONFIG.get('timeframe_entry', 'M15'))
+        self.chart_tf_menu = ctk.CTkOptionMenu(controls, variable=self.chart_tf_var, values=['M1', 'M5', 'M15', 'M30', 'H1', 'H4'])
+        self.chart_tf_menu.pack(side="left", padx=5)
+        
+        # Refresh Button
+        ctk.CTkButton(controls, text="Refresh Chart", command=self.update_chart).pack(side="left", padx=10)
+        
+        # Auto-Refresh Toggle
+        self.auto_refresh_var = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(controls, text="Auto-Refresh (5s)", variable=self.auto_refresh_var).pack(side="left", padx=10)
+
+        # Chart Container
+        self.chart_frame = ctk.CTkFrame(parent)
+        self.chart_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=5)
+        
+        # Placeholder for Canvas
+        self.canvas = None
+        
+        # Start Auto-Refresh Loop
+        self.after(5000, self.auto_refresh_chart)
+
+    def auto_refresh_chart(self):
+        if self.auto_refresh_var.get() and self.tabview.get() == "Charts":
+            self.update_chart()
+        self.after(5000, self.auto_refresh_chart)
+
+    def update_chart(self):
+        symbol = self.chart_symbol_var.get()
+        tf_name = self.chart_tf_var.get()
+        
+        # Run in thread to avoid freezing UI
+        threading.Thread(target=self._fetch_data, args=(symbol, tf_name), daemon=True).start()
+
+    def _fetch_data(self, symbol, tf_name):
+        try:
+            import MetaTrader5 as mt5
+            import pandas as pd
+            from fibonacci import FibonacciTracker
+            
+            # Map TF string to variable
+            tf_map = {
+                'M1': mt5.TIMEFRAME_M1, 'M5': mt5.TIMEFRAME_M5,
+                'M15': mt5.TIMEFRAME_M15, 'M30': mt5.TIMEFRAME_M30,
+                'H1': mt5.TIMEFRAME_H1, 'H4': mt5.TIMEFRAME_H4
+            }
+            tf = tf_map.get(tf_name, mt5.TIMEFRAME_M15)
+            
+            if not mt5.initialize():
+                return
+
+            rates = mt5.copy_rates_from_pos(symbol, tf, 0, 150)
+            mt5.shutdown()
+            
+            if rates is None or len(rates) == 0:
+                print(f"No data for {symbol}")
+                return
+
+            df = pd.DataFrame(rates)
+            df['time'] = pd.to_datetime(df['time'], unit='s')
+            
+            # Identify Fib setups (needs 'time' column)
+            tracker = FibonacciTracker()
+            tracker.update_fibonacci_setups(df)
+            valid_setups = tracker.get_valid_setups()
+            
+            # Set index for mplfinance
+            df.set_index('time', inplace=True)
+            
+            # Pass data to main thread for plotting
+            self.after(0, lambda: self._draw_chart(df, valid_setups))
+            
+        except Exception as e:
+            print(f"Data fetch error: {e}")
+
+    def _draw_chart(self, df, valid_setups):
+        try:
+            import mplfinance as mpf
+            from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+            import matplotlib.pyplot as plt
+            
+            # Prepare Plot
+            mc = mpf.make_marketcolors(up='green', down='red', inherit=True)
+            s = mpf.make_mpf_style(base_mpf_style='nightclouds', marketcolors=mc)
+            
+            # Add Fib Lines
+            alines = []
+            if valid_setups:
+                # Plot mostly the recent active setup
+                setup = valid_setups[-1]
+                swing_high = setup['swing_high']['price']
+                swing_low = setup['swing_low']['price']
+                
+                # Fib Levels
+                levels = setup['fib_levels']
+                
+                # Create lines list [(t1, p1), (t2, p2)]
+                t_start = df.index[0]
+                t_end = df.index[-1]
+                
+                alines.append([(t_start, swing_high), (t_end, swing_high)]) # SH
+                alines.append([(t_start, swing_low), (t_end, swing_low)])   # SL
+                
+                for lvl, price in levels.items():
+                    alines.append([(t_start, price), (t_end, price)])
+
+            # Plot to Figure (Must be in main thread)
+            # close_after_plot=False is implicit with returnfig=True, but we handle closing manually
+            fig, ax = mpf.plot(df, type='candle', style=s, volume=False, 
+                               returnfig=True, alines=dict(alines=alines, colors=['red', 'blue'] + ['orange']*3, linewidths=1, alpha=0.7))
+            
+            # Clear old canvas
+            if self.canvas:
+                self.canvas.get_tk_widget().destroy()
+                # Close *specific* old figures if we stored them, or close 'all' carefully
+                # plt.close('all') can be aggressive but usually fine in single-window GUI if we redraw everything
+                pass 
+                
+            # Note: with returnfig=True, mpf creates a figure. 
+            # We should close previous figures to avoid memory leak.
+            # But since we didn't store the reference to the previous 'fig', plt.close('all') is a nuclear option.
+            # A better way is if we stored self.current_fig
+            if hasattr(self, 'current_fig') and self.current_fig:
+                plt.close(self.current_fig)
+                
+            self.current_fig = fig
+
+            self.canvas = FigureCanvasTkAgg(fig, master=self.chart_frame)
+            self.canvas.draw()
+            self.canvas.get_tk_widget().pack(fill="both", expand=True)
+
+        except Exception as e:
+            print(f"Drawing error: {e}")
+            import traceback
+            traceback.print_exc()
 
     def create_input_row(self, parent, label_text, config_key, row, type_cast=str, tooltip=None):
         label = ctk.CTkLabel(parent, text=label_text, anchor="w")
