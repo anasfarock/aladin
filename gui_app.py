@@ -319,10 +319,25 @@ class AladinGUI(ctk.CTk):
                 for lvl, price in levels.items():
                     alines.append([(t_start, price), (t_end, price)])
 
-            # Plot to Figure (Must be in main thread)
-            # close_after_plot=False is implicit with returnfig=True, but we handle closing manually
-            fig, ax = mpf.plot(df, type='candle', style=s, volume=False, 
+            # Plot to Figure
+            # returnfig=True returns (fig, axlist)
+            fig, axlist = mpf.plot(df, type='candle', style=s, volume=False, 
                                returnfig=True, alines=dict(alines=alines, colors=['red', 'blue'] + ['orange']*3, linewidths=1, alpha=0.7))
+            
+            # Add Text Labels
+            if valid_setups:
+                ax = axlist[0]
+                # mplfinance uses integer coordinates 0..len(df) for x-axis
+                # Place labels at the right side of the chart
+                x_pos = len(df) - 1
+                
+                # Label Swing Points
+                ax.text(x_pos, swing_high, f" SH: {swing_high:.5f}", color='white', fontsize=9, va='bottom', ha='right', fontweight='bold')
+                ax.text(x_pos, swing_low, f" SL: {swing_low:.5f}", color='white', fontsize=9, va='top', ha='right', fontweight='bold')
+                
+                # Label Fib Levels
+                for lvl, price in levels.items():
+                    ax.text(x_pos, price, f" Fib {lvl}: {price:.5f}", color='orange', fontsize=8, va='bottom', ha='right')
             
             # Clear old canvas
             if self.canvas:
