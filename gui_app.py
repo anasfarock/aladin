@@ -222,6 +222,9 @@ class AladinGUI(ctk.CTk):
         # Refresh Button
         ctk.CTkButton(controls, text="Refresh Chart", command=self.update_chart).pack(side="left", padx=10)
         
+        # View Settings Button
+        ctk.CTkButton(controls, text="Filter Levels", command=self.open_view_settings, width=100).pack(side="left", padx=5)
+        
         # Auto-Refresh Toggle
         self.auto_refresh_var = ctk.BooleanVar(value=True)
         ctk.CTkCheckBox(controls, text="Auto-Refresh (5s)", variable=self.auto_refresh_var).pack(side="left", padx=10)
@@ -240,8 +243,45 @@ class AladinGUI(ctk.CTk):
         self.current_df = None   # Store df for reference
         self.selected_setup_signature = None # Tuple: (type, sh_time, sl_time)
         
+        # View Settings (Default all visible)
+        self.view_settings = {'sh_sl': True}
+        # Dynamically add all configured fib levels
+        for level in CONFIG.get('fib_levels', [0.618, 0.705, 0.786]):
+            self.view_settings[str(level)] = True
+        
         # Start Auto-Refresh Loop
         self.after(5000, self.auto_refresh_chart)
+
+    def open_view_settings(self):
+        """Open a dialog to toggle visibility of fib levels"""
+        settings_window = ctk.CTkToplevel(self)
+        settings_window.title("Filter Fibonacci Levels")
+        settings_window.geometry("300x400")
+        
+        ctk.CTkLabel(settings_window, text="Select Visible Levels", font=ctk.CTkFont(size=16, weight="bold")).pack(pady=10)
+        
+        # Helper to toggle
+        def toggle_setting(key):
+            self.view_settings[key] = not self.view_settings[key]
+            # Redraw immediately if we have data
+            if self.current_df is not None:
+                self._handle_data_update(self.current_df, self.current_setups)
+
+        # Swing High/Low
+        var_sh = ctk.BooleanVar(value=self.view_settings.get('sh_sl', True))
+        ctk.CTkCheckBox(settings_window, text="Swing High / Low", variable=var_sh, 
+                        command=lambda: toggle_setting('sh_sl')).pack(pady=5, anchor="w", padx=20)
+        
+        # Fib Levels from Config
+        levels = CONFIG.get('fib_levels', [0.618, 0.705, 0.786])
+        # Sort levels for nicer display
+        levels.sort()
+        
+        for level in levels:
+            key = str(level)
+            var = ctk.BooleanVar(value=self.view_settings.get(key, True))
+            ctk.CTkCheckBox(settings_window, text=f"Fib {level}", variable=var,
+                            command=lambda k=key: toggle_setting(k)).pack(pady=5, anchor="w", padx=20)
 
     def auto_refresh_chart(self):
         try:
@@ -297,12 +337,16 @@ class AladinGUI(ctk.CTk):
             df.set_index('time', inplace=True)
             
             # Pass data to main thread for updates
+            # Check if window exists before scheduling
             self.after(0, lambda: self._handle_data_update(df, valid_setups))
             
         except Exception as e:
             print(f"Data fetch error: {e}")
 
     def _handle_data_update(self, df, valid_setups):
+        if not self.winfo_exists():
+            return
+            
         self.current_df = df
         self.current_setups = valid_setups
         
@@ -328,8 +372,6 @@ class AladinGUI(ctk.CTk):
             if found_setup:
                 setups_to_draw = [found_setup]
             else:
-                # Setup no longer valid or not found, revert to all (or clear?)
-                # user probably wants to know it's gone, but reverting to all is safest
                 self.selected_setup_signature = None
         
         # Update Setups List UI
@@ -412,12 +454,17 @@ class AladinGUI(ctk.CTk):
                 swing_low = setup['swing_low']['price']
                 levels = setup['fib_levels']
                 
-                # Draw lines across whole chart for visibility
-                alines.append([(t_start, swing_high), (t_end, swing_high)]) # SH
-                alines.append([(t_start, swing_low), (t_end, swing_low)])   # SL
+                # Check Visibility Settings
+                show_sh_sl = self.view_settings.get('sh_sl', True)
+                
+                if show_sh_sl:
+                    alines.append([(t_start, swing_high), (t_end, swing_high)]) # SH
+                    alines.append([(t_start, swing_low), (t_end, swing_low)])   # SL
                 
                 for lvl, price in levels.items():
-                    alines.append([(t_start, price), (t_end, price)])
+                    # Check if level is enabled in settings
+                    if self.view_settings.get(str(lvl), True):
+                        alines.append([(t_start, price), (t_end, price)])
 
             # Plot to Figure
             fig, axlist = mpf.plot(df, type='candle', style=s, volume=False, 
@@ -432,29 +479,46 @@ class AladinGUI(ctk.CTk):
                      ax.text(x_pos, y, text, color=color, fontsize=8, va=align_y, ha='right', fontweight='bold',
                             bbox=dict(facecolor='black', alpha=0.5, edgecolor='none'))
 
-                # Label each setup
+                # Label each setup based on visibility
                 for setup in drawn_setups:
                     swing_high = setup['swing_high']['price']
                     swing_low = setup['swing_low']['price']
                     levels = setup['fib_levels']
                     
-                    add_label(swing_high, f"SH: {swing_high:.5f}", 'white', 'bottom')
-                    add_label(swing_low, f"SL: {swing_low:.5f}", 'white', 'top')
+                    show_sh_sl = self.view_settings.get('sh_sl', True)
+                    
+                    if show_sh_sl:
+                        add_label(swing_high, f"SH: {swing_high:.5f}", 'white', 'bottom')
+                        add_label(swing_low, f"SL: {swing_low:.5f}", 'white', 'top')
                     
                     for lvl, price in levels.items():
-                        add_label(price, f"Fib {lvl}: {price:.5f}", 'orange')
+                        if self.view_settings.get(str(lvl), True):
+                            add_label(price, f"Fib {lvl}: {price:.5f}", 'orange')
             
             # Clean up old
             if hasattr(self, 'current_fig') and self.current_fig:
-                plt.close(self.current_fig)
-            self.current_fig = fig
+                # We will close it after swapping if we reuse the canvas
+                pass 
 
-            if self.canvas:
-                self.canvas.get_tk_widget().destroy()
+            if self.canvas is None:
+                self.canvas = FigureCanvasTkAgg(fig, master=self.chart_frame)
+                self.canvas.draw()
+                self.canvas.get_tk_widget().pack(fill="both", expand=True)
+            else:
+                # Reuse existing canvas to prevent flicker
+                # Get the old figure before we overwrite the reference
+                old_fig = self.canvas.figure
                 
-            self.canvas = FigureCanvasTkAgg(fig, master=self.chart_frame)
-            self.canvas.draw()
-            self.canvas.get_tk_widget().pack(fill="both", expand=True)
+                # Hot-swap the figure
+                self.canvas.figure = fig
+                fig.set_canvas(self.canvas)
+                self.canvas.draw()
+                
+                # Close the old figure to prevent memory leak
+                if old_fig:
+                    plt.close(old_fig)
+                    
+            self.current_fig = fig
 
         except Exception as e:
             print(f"Drawing error: {e}")
