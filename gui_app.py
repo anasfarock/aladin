@@ -199,12 +199,13 @@ class AladinGUI(ctk.CTk):
         self.create_chart_tab(self.tab_charts)
 
     def create_chart_tab(self, parent):
-        parent.grid_columnconfigure(0, weight=1)
+        parent.grid_columnconfigure(0, weight=3) # Chart area
+        parent.grid_columnconfigure(1, weight=1) # Setup list area
         parent.grid_rowconfigure(1, weight=1)
         
-        # Controls Frame
+        # Controls Frame (Spans both columns)
         controls = ctk.CTkFrame(parent)
-        controls.grid(row=0, column=0, sticky="ew", padx=10, pady=5)
+        controls.grid(row=0, column=0, columnspan=2, sticky="ew", padx=10, pady=5)
         
         # Symbol Selector
         ctk.CTkLabel(controls, text="Symbol:").pack(side="left", padx=5)
@@ -225,12 +226,19 @@ class AladinGUI(ctk.CTk):
         self.auto_refresh_var = ctk.BooleanVar(value=True)
         ctk.CTkCheckBox(controls, text="Auto-Refresh (5s)", variable=self.auto_refresh_var).pack(side="left", padx=10)
 
-        # Chart Container
+        # Chart Container (Left)
         self.chart_frame = ctk.CTkFrame(parent)
-        self.chart_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=5)
+        self.chart_frame.grid(row=1, column=0, sticky="nsew", padx=(10, 5), pady=5)
+        
+        # Setups List Container (Right)
+        self.setups_frame = ctk.CTkScrollableFrame(parent, label_text="Detected Fib Setups")
+        self.setups_frame.grid(row=1, column=1, sticky="nsew", padx=(5, 10), pady=5)
         
         # Placeholder for Canvas
         self.canvas = None
+        self.current_setups = [] # Store setups for reference
+        self.current_df = None   # Store df for reference
+        
         # Start Auto-Refresh Loop
         self.after(5000, self.auto_refresh_chart)
 
@@ -268,7 +276,8 @@ class AladinGUI(ctk.CTk):
             if not mt5.initialize():
                 return
 
-            rates = mt5.copy_rates_from_pos(symbol, tf, 0, 150)
+            # Fetch more candles to see older setups
+            rates = mt5.copy_rates_from_pos(symbol, tf, 0, 300)
             mt5.shutdown()
             
             if rates is None or len(rates) == 0:
@@ -286,16 +295,55 @@ class AladinGUI(ctk.CTk):
             # Set index for mplfinance
             df.set_index('time', inplace=True)
             
-            # Pass data to main thread for plotting
-            # Check if window exists before scheduling
-            # Note: We can't easily check winfo_exists from thread without risk, but self.after is generally safe-ish
-            # However, better to handle it in the callback
-            self.after(0, lambda: self._draw_chart(df, valid_setups))
+            # Pass data to main thread for updates
+            self.after(0, lambda: self._handle_data_update(df, valid_setups))
             
         except Exception as e:
             print(f"Data fetch error: {e}")
 
-    def _draw_chart(self, df, valid_setups):
+    def _handle_data_update(self, df, valid_setups):
+        self.current_df = df
+        self.current_setups = valid_setups
+        
+        # Update Setups List UI
+        self._update_setups_list_ui()
+        
+        # Draw chart with ALL setups by default (or user preference? usually latest + older ones)
+        # But if list was empty before, maybe defaulting to all is chaotic.
+        # Let's default to drawing ALL valid setups initially so user sees everything.
+        self._draw_chart(df, valid_setups)
+
+    def _update_setups_list_ui(self):
+        # Clear existing widgets
+        for widget in self.setups_frame.winfo_children():
+            widget.destroy()
+            
+        if not self.current_setups:
+            ctk.CTkLabel(self.setups_frame, text="No valid setups found").pack(pady=10)
+            return
+
+        # "Show All" Button
+        ctk.CTkButton(self.setups_frame, text="Show All Setups", 
+                      command=lambda: self._draw_chart(self.current_df, self.current_setups),
+                      fg_color="gray").pack(pady=(0, 5), fill="x")
+
+        # List individual setups
+        for i, setup in enumerate(reversed(self.current_setups)): # Newest first
+            setup_type = "Bullish" if setup['type'] == 'bullish_retracement' else "Bearish"
+            age = setup['age']
+            price = setup['fib_0_price']
+            
+            btn_text = f"#{len(self.current_setups)-i} {setup_type}\nAge: {age} bars"
+            
+            # Create a button for each setup
+            btn = ctk.CTkButton(
+                self.setups_frame, 
+                text=btn_text,
+                command=lambda s=setup: self._draw_chart(self.current_df, [s])
+            )
+            btn.pack(pady=2, fill="x")
+
+    def _draw_chart(self, df, setups_to_draw):
         try:
             if not self.winfo_exists():
                 return
@@ -310,19 +358,19 @@ class AladinGUI(ctk.CTk):
             
             # Add Fib Lines
             alines = []
-            if valid_setups:
-                # Plot mostly the recent active setup
-                setup = valid_setups[-1]
+            
+            # We need to know which setups we are drawing to label them
+            drawn_setups = setups_to_draw if setups_to_draw else []
+            
+            t_start = df.index[0]
+            t_end = df.index[-1]
+            
+            for setup in drawn_setups:
                 swing_high = setup['swing_high']['price']
                 swing_low = setup['swing_low']['price']
-                
-                # Fib Levels
                 levels = setup['fib_levels']
                 
-                # Create lines list [(t1, p1), (t2, p2)]
-                t_start = df.index[0]
-                t_end = df.index[-1]
-                
+                # Draw lines across whole chart for visibility
                 alines.append([(t_start, swing_high), (t_end, swing_high)]) # SH
                 alines.append([(t_start, swing_low), (t_end, swing_low)])   # SL
                 
@@ -334,22 +382,25 @@ class AladinGUI(ctk.CTk):
                                returnfig=True, alines=dict(alines=alines, colors=['red', 'blue'] + ['orange']*3, linewidths=1, alpha=0.7))
             
             # Add Text Labels
-            if valid_setups:
+            if drawn_setups:
                 ax = axlist[0]
-                # Label Swing Points - shift back slightly to ensure visibility
-                x_pos = len(df) - 5 # Shift back 5 candles so text isn't cut off at edge
+                x_pos = len(df) - 5
                 
-                # Helper for legible text
-                def add_label(y, text, color):
-                    ax.text(x_pos, y, text, color=color, fontsize=9, va='center', ha='right', fontweight='bold', 
+                def add_label(y, text, color, align_y='center'):
+                     ax.text(x_pos, y, text, color=color, fontsize=8, va=align_y, ha='right', fontweight='bold',
                             bbox=dict(facecolor='black', alpha=0.5, edgecolor='none'))
 
-                add_label(swing_high, f"SH: {swing_high:.5f}", 'white')
-                add_label(swing_low, f"SL: {swing_low:.5f}", 'white')
-                
-                # Label Fib Levels
-                for lvl, price in levels.items():
-                    add_label(price, f"Fib {lvl}: {price:.5f}", 'orange')
+                # Label each setup
+                for setup in drawn_setups:
+                    swing_high = setup['swing_high']['price']
+                    swing_low = setup['swing_low']['price']
+                    levels = setup['fib_levels']
+                    
+                    add_label(swing_high, f"SH: {swing_high:.5f}", 'white', 'bottom')
+                    add_label(swing_low, f"SL: {swing_low:.5f}", 'white', 'top')
+                    
+                    for lvl, price in levels.items():
+                        add_label(price, f"Fib {lvl}: {price:.5f}", 'orange')
             
             # Clean up old
             if hasattr(self, 'current_fig') and self.current_fig:

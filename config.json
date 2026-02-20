@@ -46,11 +46,11 @@
     "max_daily_loss_count_per_symbol": 3,
     "symbols": [
         "XAGUSD",
-        "USDCAD",
+        "GBPUSD",
         "XAUUSD",
         "AUDUSD",
-        "EURUSD",
-        "GBPUSD"
+        "USDCAD",
+        "EURUSD"
     ],
     "symbol": "XAGUSD",
     "trading_enabled": true
