@@ -238,6 +238,7 @@ class AladinGUI(ctk.CTk):
         self.canvas = None
         self.current_setups = [] # Store setups for reference
         self.current_df = None   # Store df for reference
+        self.selected_setup_signature = None # Tuple: (type, sh_time, sl_time)
         
         # Start Auto-Refresh Loop
         self.after(5000, self.auto_refresh_chart)
@@ -305,13 +306,37 @@ class AladinGUI(ctk.CTk):
         self.current_df = df
         self.current_setups = valid_setups
         
+        # Determine what to draw based on previous selection
+        setups_to_draw = valid_setups # Default to all
+        
+        if self.selected_setup_signature:
+            # Try to find the selected setup in the new list
+            found_setup = None
+            sig_type, sig_sh_time, sig_sl_time = self.selected_setup_signature
+            
+            for setup in valid_setups:
+                s_type = setup['type']
+                s_sh_time = setup['swing_high']['time']
+                s_sl_time = setup['swing_low']['time']
+                
+                if (s_type == sig_type and 
+                    s_sh_time == sig_sh_time and 
+                    s_sl_time == sig_sl_time):
+                    found_setup = setup
+                    break
+            
+            if found_setup:
+                setups_to_draw = [found_setup]
+            else:
+                # Setup no longer valid or not found, revert to all (or clear?)
+                # user probably wants to know it's gone, but reverting to all is safest
+                self.selected_setup_signature = None
+        
         # Update Setups List UI
         self._update_setups_list_ui()
         
-        # Draw chart with ALL setups by default (or user preference? usually latest + older ones)
-        # But if list was empty before, maybe defaulting to all is chaotic.
-        # Let's default to drawing ALL valid setups initially so user sees everything.
-        self._draw_chart(df, valid_setups)
+        # Draw chart
+        self._draw_chart(df, setups_to_draw)
 
     def _update_setups_list_ui(self):
         # Clear existing widgets
@@ -323,23 +348,40 @@ class AladinGUI(ctk.CTk):
             return
 
         # "Show All" Button
-        ctk.CTkButton(self.setups_frame, text="Show All Setups", 
-                      command=lambda: self._draw_chart(self.current_df, self.current_setups),
-                      fg_color="gray").pack(pady=(0, 5), fill="x")
+        def select_all():
+            self.selected_setup_signature = None
+            self._draw_chart(self.current_df, self.current_setups)
+            
+        btn_all = ctk.CTkButton(self.setups_frame, text="Show All Setups", 
+                      command=select_all,
+                      fg_color="gray" if self.selected_setup_signature else "green") # Highlight if selected
+        btn_all.pack(pady=(0, 5), fill="x")
 
         # List individual setups
         for i, setup in enumerate(reversed(self.current_setups)): # Newest first
             setup_type = "Bullish" if setup['type'] == 'bullish_retracement' else "Bearish"
             age = setup['age']
-            price = setup['fib_0_price']
+            
+            # Create signature
+            sig = (setup['type'], setup['swing_high']['time'], setup['swing_low']['time'])
+            is_selected = (self.selected_setup_signature == sig)
             
             btn_text = f"#{len(self.current_setups)-i} {setup_type}\nAge: {age} bars"
             
+            def select_setup(s=setup, signature=sig):
+                self.selected_setup_signature = signature
+                self._draw_chart(self.current_df, [s])
+                # We could trigger UI update to highlight button, but simpler to wait for next refresh 
+                # or just accept that list highlighting updates slowly. 
+                # Actually, let's force list update to show highlight immediately
+                self._update_setups_list_ui()
+
             # Create a button for each setup
             btn = ctk.CTkButton(
                 self.setups_frame, 
                 text=btn_text,
-                command=lambda s=setup: self._draw_chart(self.current_df, [s])
+                command=select_setup,
+                fg_color="green" if is_selected else "blue" # Simple highlighting
             )
             btn.pack(pady=2, fill="x")
 
