@@ -7,6 +7,8 @@ import sys
 import subprocess
 import threading
 import queue
+import matplotlib
+matplotlib.use("TkAgg")
 from config import CONFIG
 
 # Set appearance mode and color theme
@@ -458,18 +460,23 @@ class AladinGUI(ctk.CTk):
 
     def fetch_symbols_from_mt5(self):
         """Connect to MT5 and fetch all symbols"""
+        def _update_ui(status, btn_state):
+            self.selector_status.configure(text=status)
+            self.fetch_btn.configure(state=btn_state)
+
+        def _log(msg):
+            self.log_message(msg)
+
         try:
-            # Update UI from thread safe way
-            self.selector_status.configure(text="Connecting to MT5...")
-            self.fetch_btn.configure(state="disabled")
+            # Update UI from main thread
+            self.after(0, _update_ui, "Connecting to MT5...", "disabled")
             
             import MetaTrader5 as mt5
             
             if not mt5.initialize():
                 err = mt5.last_error()
-                self.log_message(f"MT5 Init failed: {err}")
-                self.selector_status.configure(text=f"Connection Failed: {err}")
-                self.fetch_btn.configure(state="normal")
+                self.after(0, _log, f"MT5 Init failed: {err}")
+                self.after(0, _update_ui, f"Connection Failed: {err}", "normal")
                 return
                 
             symbols_info = mt5.symbols_get()
@@ -479,18 +486,17 @@ class AladinGUI(ctk.CTk):
                 
                 # Update UI in main thread
                 self.after(0, lambda: self._update_selector_ui(symbols_list))
-                # self.log_message(f"Successfully loaded {len(symbols_list)} symbols from MT5")
             else:
-                 self.log_message("No symbols found in MT5")
-                 self.selector_status.configure(text="No symbols found")
+                 self.after(0, _log, "No symbols found in MT5")
+                 self.after(0, _update_ui, "No symbols found", "normal")
                  
             mt5.shutdown()
             
         except Exception as e:
-            self.log_message(f"Error fetching symbols: {e}")
-            self.selector_status.configure(text="Error fetching symbols")
-        finally:
-            self.fetch_btn.configure(state="normal")
+            self.after(0, _log, f"Error fetching symbols: {e}")
+            self.after(0, _update_ui, "Error fetching symbols", "normal")
+        # finally block removed because state restoration is handled in callbacks above
+        # to ensure it happens in main thread in correct order
 
     def _update_selector_ui(self, symbols_list):
         # Create Selector
