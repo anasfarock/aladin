@@ -231,13 +231,17 @@ class AladinGUI(ctk.CTk):
         
         # Placeholder for Canvas
         self.canvas = None
-        
         # Start Auto-Refresh Loop
         self.after(5000, self.auto_refresh_chart)
 
     def auto_refresh_chart(self):
-        if self.auto_refresh_var.get() and self.tabview.get() == "Charts":
-            self.update_chart()
+        try:
+            if not self.winfo_exists():
+                return
+            if self.auto_refresh_var.get() and self.tabview.get() == "Charts":
+                self.update_chart()
+        except Exception:
+            pass
         self.after(5000, self.auto_refresh_chart)
 
     def update_chart(self):
@@ -283,6 +287,9 @@ class AladinGUI(ctk.CTk):
             df.set_index('time', inplace=True)
             
             # Pass data to main thread for plotting
+            # Check if window exists before scheduling
+            # Note: We can't easily check winfo_exists from thread without risk, but self.after is generally safe-ish
+            # However, better to handle it in the callback
             self.after(0, lambda: self._draw_chart(df, valid_setups))
             
         except Exception as e:
@@ -290,6 +297,9 @@ class AladinGUI(ctk.CTk):
 
     def _draw_chart(self, df, valid_setups):
         try:
+            if not self.winfo_exists():
+                return
+
             import mplfinance as mpf
             from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
             import matplotlib.pyplot as plt
@@ -320,41 +330,35 @@ class AladinGUI(ctk.CTk):
                     alines.append([(t_start, price), (t_end, price)])
 
             # Plot to Figure
-            # returnfig=True returns (fig, axlist)
             fig, axlist = mpf.plot(df, type='candle', style=s, volume=False, 
                                returnfig=True, alines=dict(alines=alines, colors=['red', 'blue'] + ['orange']*3, linewidths=1, alpha=0.7))
             
             # Add Text Labels
             if valid_setups:
                 ax = axlist[0]
-                # mplfinance uses integer coordinates 0..len(df) for x-axis
-                # Place labels at the right side of the chart
-                x_pos = len(df) - 1
+                # Label Swing Points - shift back slightly to ensure visibility
+                x_pos = len(df) - 5 # Shift back 5 candles so text isn't cut off at edge
                 
-                # Label Swing Points
-                ax.text(x_pos, swing_high, f" SH: {swing_high:.5f}", color='white', fontsize=9, va='bottom', ha='right', fontweight='bold')
-                ax.text(x_pos, swing_low, f" SL: {swing_low:.5f}", color='white', fontsize=9, va='top', ha='right', fontweight='bold')
+                # Helper for legible text
+                def add_label(y, text, color):
+                    ax.text(x_pos, y, text, color=color, fontsize=9, va='center', ha='right', fontweight='bold', 
+                            bbox=dict(facecolor='black', alpha=0.5, edgecolor='none'))
+
+                add_label(swing_high, f"SH: {swing_high:.5f}", 'white')
+                add_label(swing_low, f"SL: {swing_low:.5f}", 'white')
                 
                 # Label Fib Levels
                 for lvl, price in levels.items():
-                    ax.text(x_pos, price, f" Fib {lvl}: {price:.5f}", color='orange', fontsize=8, va='bottom', ha='right')
+                    add_label(price, f"Fib {lvl}: {price:.5f}", 'orange')
             
-            # Clear old canvas
-            if self.canvas:
-                self.canvas.get_tk_widget().destroy()
-                # Close *specific* old figures if we stored them, or close 'all' carefully
-                # plt.close('all') can be aggressive but usually fine in single-window GUI if we redraw everything
-                pass 
-                
-            # Note: with returnfig=True, mpf creates a figure. 
-            # We should close previous figures to avoid memory leak.
-            # But since we didn't store the reference to the previous 'fig', plt.close('all') is a nuclear option.
-            # A better way is if we stored self.current_fig
+            # Clean up old
             if hasattr(self, 'current_fig') and self.current_fig:
                 plt.close(self.current_fig)
-                
             self.current_fig = fig
 
+            if self.canvas:
+                self.canvas.get_tk_widget().destroy()
+                
             self.canvas = FigureCanvasTkAgg(fig, master=self.chart_frame)
             self.canvas.draw()
             self.canvas.get_tk_widget().pack(fill="both", expand=True)
