@@ -36,8 +36,8 @@ CONFIG = {
     'symbols': ['USDCAD'], # List of symbols to trade
     'trading_enabled': False, # Master switch for trade execution
     'backtest': False,
-    'start': '2025-11-13',
-    'end': '2025-11-30',
+    'start': '2026-02-15',
+    'end': '2026-02-23',
     'capital': 2500.0,
     'risk_pct': 0.25,
     

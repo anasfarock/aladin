@@ -120,9 +120,17 @@ class DailyLossTracker:
         except Exception as e:
             logger.warning(f"Error loading history from MT5: {e}")
     
-    def _check_and_reset_if_needed(self):
+    def _check_and_reset_if_needed(self, simulated_date=None):
         """Check if it's a new day and reset counters"""
-        current_date = date.today()
+        if simulated_date is not None:
+            # Handle pandas Timestamp
+            if hasattr(simulated_date, 'date'):
+                current_date = simulated_date.date()
+            else:
+                current_date = simulated_date
+        else:
+            current_date = date.today()
+            
         if current_date != self.last_reset_date:
             self._reset_daily_counters(current_date)
     
@@ -190,7 +198,7 @@ class DailyLossTracker:
         logger.info(f"  {symbol} Losses Today: ${self.daily_losses[symbol]:.2f} ({self.loss_count[symbol]} losses)")
         logger.info(f"{'='*70}")
     
-    def can_trade(self, symbol):
+    def can_trade(self, symbol, simulated_date=None):
         """
         Check if trading is allowed based on daily LOSS limits
         
@@ -200,7 +208,7 @@ class DailyLossTracker:
         Returns:
             tuple: (is_allowed, reason_string)
         """
-        self._check_and_reset_if_needed()
+        self._check_and_reset_if_needed(simulated_date)
         
         max_daily_losses = CONFIG.get('max_daily_losses', -1)
         max_daily_loss_count = CONFIG.get('max_daily_loss_count', -1)

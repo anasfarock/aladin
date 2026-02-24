@@ -12,8 +12,9 @@ from config import CONFIG, MT5_TIMEFRAMES, logger
 from indicators import compute_indicators
 from fibonacci import identify_swing_points, find_fibonacci_setups, check_fibonacci_entry
 from trend_analysis import determine_trend, check_adx_across_timeframes
-from risk_management import update_trailing_stop, compare_stop_loss_methods
+from risk_management import update_trailing_stop, compare_stop_loss_methods, DailyLossTracker
 from mt5_handler import fetch_mt5_df
+from f_analysis import get_combined_sentiment_fundamental_score
 
 def calculate_max_drawdown(equity_curve):
     """Calculate maximum drawdown from equity curve"""
@@ -117,7 +118,8 @@ def backtest(symbol, start, end, timeframe):
     
     utc_from = datetime.fromisoformat(start)
     utc_to = datetime.fromisoformat(end)
-    extended_from = utc_from - timedelta(days=90)
+    # Reduced from 90 to 30 to allow backtesting on smaller datasets
+    extended_from = utc_from - timedelta(days=30)
     
     # Fetch data for trend timeframes
     try:
@@ -127,12 +129,15 @@ def backtest(symbol, start, end, timeframe):
         # Fetch trend timeframes
         trend_dataframes = {}
         for tf_name in CONFIG['trend_timeframes']:
+            # We don't strictly *need* an exact amount for higher timeframes unless MA requires it
+            # But making it too high causes errors if data is short
+            min_bars = 5 if tf_name == 'D1' else 10 
             trend_dataframes[tf_name] = fetch_mt5_df(
                 symbol, 
                 MT5_TIMEFRAMES[tf_name], 
                 extended_from, 
                 utc_to, 
-                min_bars_expected=10
+                min_bars_expected=min_bars
             )
         
         # Fetch ADX-specific timeframes
@@ -175,9 +180,13 @@ def backtest(symbol, start, end, timeframe):
     open_positions = []
     pending_entry = None  # Store signal for next bar entry
     
+    # Initialize a daily loss tracker specifically for backtesting
+    backtest_loss_tracker = DailyLossTracker()
+    
     # Trend tracking for statistics
     trend_counts = {'bullish': 0, 'bearish': 0, 'neutral': 0}
     adx_filtered_signals = 0
+    macro_filtered_signals = 0
     
     logger.info(f"Running backtest on {len(df)} bars...")
     
@@ -188,6 +197,9 @@ def backtest(symbol, start, end, timeframe):
     for idx in range(len(df)):
         current_bar = df.iloc[idx]
         current_time = current_bar['time']
+        
+        # Manually manage daily loss tracker date
+        backtest_loss_tracker._check_and_reset_if_needed(current_time)
         
         # Get timeframe slices up to current time
         trend_slices = {}
@@ -346,6 +358,9 @@ def backtest(symbol, start, end, timeframe):
                     pl = (exit_price - pos['entry']) * pos['units']
                     balance += pl
                     
+                    if pl < 0:
+                        backtest_loss_tracker.record_loss(symbol, abs(pl))
+                    
                     exit_reason = 'trailing_stop' if pos.get('trailing_active', False) else 'stop_loss'
                     
                     trades.append({
@@ -393,6 +408,9 @@ def backtest(symbol, start, end, timeframe):
                     pl = (pos['entry'] - exit_price) * pos['units']
                     balance += pl
                     
+                    if pl < 0:
+                        backtest_loss_tracker.record_loss(symbol, abs(pl))
+                    
                     exit_reason = 'trailing_stop' if pos.get('trailing_active', False) else 'stop_loss'
                     
                     trades.append({
@@ -435,6 +453,11 @@ def backtest(symbol, start, end, timeframe):
         
         # STEP 3: Check for new entry signals
         if len(open_positions) >= CONFIG['max_concurrent_trades']:
+            continue
+            
+        # Check Daily Loss Limit (pass current_time to simulate that date)
+        can_trade, reason = backtest_loss_tracker.can_trade(symbol, current_time)
+        if not can_trade:
             continue
         
         if pending_entry is not None:
@@ -496,6 +519,23 @@ def backtest(symbol, start, end, timeframe):
             if not adx_passed and CONFIG.get('use_adx_filter', False):
                 adx_filtered_signals += 1
                 logger.debug(f"Signal filtered by ADX at bar {idx}")
+                continue
+            
+            # Check Macro Filter
+            macro_passed = True
+            if CONFIG.get('use_fundamental_analysis', False) or CONFIG.get('use_sentiment_analysis', False):
+                # We mock the macro structure since we can't reliably backtest historical news
+                # But we simulate the logic flow
+                mock_macro = {'overall_direction': trend, 'confidence': 80}
+                
+                # Check alignment
+                aligned = (mock_macro['overall_direction'] == trend)
+                if not aligned and CONFIG.get('skip_trades_against_macro', False):
+                    macro_passed = False
+                    macro_filtered_signals += 1
+                    logger.debug(f"Signal filtered by MACRO at bar {idx}")
+            
+            if not macro_passed:
                 continue
             
             # Store for entry on NEXT bar

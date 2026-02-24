@@ -163,8 +163,8 @@ def compute_indicators(df):
     Returns:
         DataFrame with all indicators added
     """
-    if df.empty or len(df) < CONFIG['min_bars_required']:
-        logger.warning(f"Insufficient data for indicators: {len(df)} bars")
+    if df.empty:
+        logger.warning("Insufficient data for indicators: DataFrame is empty")
         return df
     
     df = df.copy()

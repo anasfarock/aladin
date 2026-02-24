@@ -44,14 +44,5 @@
     "max_daily_loss_count": 8,
     "max_daily_losses_per_symbol": -1.0,
     "max_daily_loss_count_per_symbol": 3,
-    "symbols": [
-        "AUDUSD",
-        "XAGUSD",
-        "GBPUSD",
-        "USDCAD",
-        "XAUUSD",
-        "EURUSD"
-    ],
-    "symbol": "AUDUSD",
     "trading_enabled": true
 }
