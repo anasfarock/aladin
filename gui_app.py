@@ -168,6 +168,7 @@ class AladinGUI(ctk.CTk):
         self.tab_macro = self.tabview.add("Macro")
         self.tab_loss_limits = self.tabview.add("Daily Limits")
         self.tab_charts = self.tabview.add("Charts")
+        self.tab_backtest = self.tabview.add("Backtest")
 
         # --- Dashboard Tab (Logs) ---
         self.tab_dashboard.grid_columnconfigure(0, weight=1)
@@ -197,6 +198,9 @@ class AladinGUI(ctk.CTk):
 
         # --- Charts Tab ---
         self.create_chart_tab(self.tab_charts)
+
+        # --- Backtest Tab ---
+        self.create_backtest_inputs(self.tab_backtest)
 
     def create_chart_tab(self, parent):
         parent.grid_columnconfigure(0, weight=3) # Chart area
@@ -615,6 +619,16 @@ class AladinGUI(ctk.CTk):
         self.create_input_row(parent, "Bullish Threshold:", 'trend_bullish_threshold', 11, int)
         self.create_input_row(parent, "Bearish Threshold:", 'trend_bearish_threshold', 12, int)
 
+    def create_backtest_inputs(self, parent):
+        parent.grid_columnconfigure(1, weight=1)
+        
+        ctk.CTkLabel(parent, text="Backtest Configuration", font=ctk.CTkFont(weight="bold")).grid(row=0, column=0, pady=(10,5), sticky="w", padx=10)
+        self.create_input_row(parent, "Start Date (YYYY-MM-DD):", 'start', 1, str)
+        self.create_input_row(parent, "End Date (YYYY-MM-DD):", 'end', 2, str)
+        
+        self.run_backtest_btn = ctk.CTkButton(parent, text="Run Backtest", command=self.run_backtest, fg_color="purple", hover_color="darkmagenta")
+        self.run_backtest_btn.grid(row=3, column=0, columnspan=2, pady=20, padx=20, sticky="ew")
+
     def create_indicator_inputs(self, parent):
         # Moving Averages
         ctk.CTkLabel(parent, text="Moving Averages", font=ctk.CTkFont(weight="bold")).grid(row=0, column=0, pady=(10,5), sticky="w", padx=10)
@@ -858,6 +872,53 @@ class AladinGUI(ctk.CTk):
         except Exception as e:
             if not silent: self.log_message(f"Failed to save config: {e}")
 
+    def run_backtest(self):
+        if self.is_running:
+            self.log_message("Cannot run backtest while another process is running.")
+            return
+            
+        self.save_config() # Auto-save args
+        
+        # Switch to Logs tab to view output
+        self.tabview.set("Log Output")
+        
+        self.start_button.configure(state="disabled")
+        self.run_backtest_btn.configure(state="disabled")
+        self.stop_button.configure(state="normal", fg_color="darkred")
+        self.status_label.configure(text="Status: BACKTESTING", text_color="purple")
+        
+        self.is_running = True
+        self.log_message("\n--- STARTING BACKTEST ---\n")
+        
+        # Run main.py with --backtest argument
+        cmd = [sys.executable, "-u", "main.py", "--backtest"]
+        
+        try:
+            if os.name == 'nt':
+                creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+            else:
+                creationflags = 0
+
+            self.bot_process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+                creationflags=creationflags
+            )
+            
+            # Start threads to read output
+            threading.Thread(target=self.read_output, args=(self.bot_process.stdout, "stdout"), daemon=True).start()
+            threading.Thread(target=self.read_output, args=(self.bot_process.stderr, "stderr"), daemon=True).start()
+            
+            # Start thread to monitor process exit
+            threading.Thread(target=self.monitor_process, daemon=True).start()
+            
+        except Exception as e:
+            self.log_message(f"Failed to start backtest process: {e}")
+            self.stop_bot_ui_cleanup()
+
     def start_bot(self):
         if self.is_running:
             return
@@ -917,6 +978,8 @@ class AladinGUI(ctk.CTk):
         self.is_running = False
         self.bot_process = None
         self.start_button.configure(state="normal")
+        if hasattr(self, 'run_backtest_btn'):
+            self.run_backtest_btn.configure(state="normal")
         self.stop_button.configure(state="disabled", fg_color="gray")
         self.status_label.configure(text="Status: STOPPED", text_color="red")
         
