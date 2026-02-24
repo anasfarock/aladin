@@ -548,9 +548,22 @@ def main():
             )
             
             if len(trades_df) > 0:
-                output_file = f"backtest_results_{CONFIG['symbol']}_{CONFIG['start']}_{CONFIG['end']}.csv"
-                trades_df.to_csv(output_file, index=False)
-                logger.info(f"\nTrade details saved to: {output_file}")
+                logger.info(f"\nFound {len(trades_df)} trades. Sending payload to GUI...")
+                # Format datetime column correctly for JSON dumping
+                if 'entry_time' in trades_df.columns:
+                    trades_df['entry_time'] = trades_df['entry_time'].astype(str)
+                if 'exit_time' in trades_df.columns:
+                    trades_df['exit_time'] = trades_df['exit_time'].astype(str)
+                    
+                import json
+                payload = {
+                    'trades': trades_df.to_dict('records'),
+                    'summary': summary
+                }
+                # Important: Print to stdout so GUI picks it up
+                print("___BACKTEST_RESULTS_JSON_START___")
+                print(json.dumps(payload))
+                print("___BACKTEST_RESULTS_JSON_END___")
         
         else:
             # Run live trading

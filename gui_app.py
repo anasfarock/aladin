@@ -638,13 +638,107 @@ class AladinGUI(ctk.CTk):
 
     def create_backtest_inputs(self, parent):
         parent.grid_columnconfigure(1, weight=1)
+        parent.grid_rowconfigure(5, weight=1) # The treeview row
         
         ctk.CTkLabel(parent, text="Backtest Configuration", font=ctk.CTkFont(weight="bold")).grid(row=0, column=0, pady=(10,5), sticky="w", padx=10)
         self.create_input_row(parent, "Start Date (YYYY-MM-DD):", 'start', 1, str)
         self.create_input_row(parent, "End Date (YYYY-MM-DD):", 'end', 2, str)
         
-        self.run_backtest_btn = ctk.CTkButton(parent, text="Run Backtest", command=self.run_backtest, fg_color="purple", hover_color="darkmagenta")
-        self.run_backtest_btn.grid(row=3, column=0, columnspan=2, pady=20, padx=20, sticky="ew")
+        # Buttons Frame
+        btn_frame = ctk.CTkFrame(parent, fg_color="transparent")
+        btn_frame.grid(row=3, column=0, columnspan=2, pady=10, padx=20, sticky="ew")
+        
+        self.run_backtest_btn = ctk.CTkButton(btn_frame, text="Run Backtest", command=self.run_backtest, fg_color="purple", hover_color="darkmagenta")
+        self.run_backtest_btn.pack(side="left", fill="x", expand=True, padx=5)
+        
+        self.export_btn = ctk.CTkButton(btn_frame, text="Export CSV", command=self.export_backtest_csv)
+        self.export_btn.pack(side="left", fill="x", expand=True, padx=5)
+        
+        # Header Label for Results
+        self.results_summary_label = ctk.CTkLabel(parent, text="Cumulative P/L: $0.00 | Total Trades: 0", font=ctk.CTkFont(weight="bold"))
+        self.results_summary_label.grid(row=4, column=0, columnspan=2, pady=(10, 5))
+        
+        # Add Treeview Table
+        import tkinter.ttk as ttk
+        columns = ('entry_time', 'exit_time', 'side', 'entry', 'exit', 'pl', 'exit_reason')
+        self.results_tree = ttk.Treeview(parent, columns=columns, show='headings', height=10)
+        
+        self.results_tree.heading('entry_time', text='Entry Time')
+        self.results_tree.heading('exit_time', text='Exit Time')
+        self.results_tree.heading('side', text='Side')
+        self.results_tree.heading('entry', text='Entry Px')
+        self.results_tree.heading('exit', text='Exit Px')
+        self.results_tree.heading('pl', text='P/L ($)')
+        self.results_tree.heading('exit_reason', text='Reason')
+        
+        self.results_tree.column('entry_time', width=130, anchor='center')
+        self.results_tree.column('exit_time', width=130, anchor='center')
+        self.results_tree.column('side', width=70, anchor='center')
+        self.results_tree.column('entry', width=90, anchor='e')
+        self.results_tree.column('exit', width=90, anchor='e')
+        self.results_tree.column('pl', width=90, anchor='e')
+        self.results_tree.column('exit_reason', width=120, anchor='w')
+        
+        # Style the Treeview for Dark Mode integration
+        style = ttk.Style()
+        style.theme_use("default")
+        style.configure("Treeview",
+                        background="#2b2b2b",
+                        foreground="white",
+                        rowheight=25,
+                        fieldbackground="#2b2b2b",
+                        borderwidth=0)
+        style.map('Treeview', background=[('selected', '#1f538d')])
+        style.configure("Treeview.Heading",
+                        background="#1f538d",
+                        foreground="white",
+                        font=('Arial', 10, 'bold'),
+                        relief="flat")
+        style.map("Treeview.Heading", background=[('active', '#14375d')])
+        
+        # Scrollbar
+        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=self.results_tree.yview)
+        self.results_tree.configure(yscrollcommand=scrollbar.set)
+        
+        self.results_tree.grid(row=5, column=0, columnspan=2, sticky="nsew", padx=10, pady=5)
+        scrollbar.grid(row=5, column=2, sticky="ns", pady=5)
+
+    def export_backtest_csv(self):
+        import csv
+        import datetime
+        from tkinter import filedialog
+        
+        items = self.results_tree.get_children()
+        if not items:
+            self.log_message("No results to export.")
+            return
+            
+        default_name = f"backtest_export_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            initialfile=default_name,
+            title="Export Backtest Results",
+            filetypes=[("CSV Files", "*.csv"), ("All Files", "*.*")]
+        )
+        
+        if not filepath:
+            return  # Cancelled
+            
+        try:
+            with open(filepath, 'w', newline='') as f:
+                writer = csv.writer(f)
+                # Write Headers
+                headers = [self.results_tree.heading(c)['text'] for c in self.results_tree['columns']]
+                writer.writerow(headers)
+                
+                # Write Rows
+                for item in items:
+                    row_data = self.results_tree.item(item)['values']
+                    writer.writerow(row_data)
+                    
+            self.log_message(f"Results exported successfully to {filepath}")
+        except Exception as e:
+            self.log_message(f"Error exporting CSV: {e}")
 
     def create_indicator_inputs(self, parent):
         # Moving Averages
@@ -926,6 +1020,7 @@ class AladinGUI(ctk.CTk):
             )
             
             # Start threads to read output
+            # Pass bot_process as an optional argument to read_output so we know not to read into GUI globals directly 
             threading.Thread(target=self.read_output, args=(self.bot_process.stdout, "stdout"), daemon=True).start()
             threading.Thread(target=self.read_output, args=(self.bot_process.stderr, "stderr"), daemon=True).start()
             
@@ -997,6 +1092,9 @@ class AladinGUI(ctk.CTk):
         self.start_button.configure(state="normal")
         if hasattr(self, 'run_backtest_btn'):
             self.run_backtest_btn.configure(state="normal")
+            # We no longer automatically load from CSV since we read the JSON stream live
+            pass
+        
         self.stop_button.configure(state="disabled", fg_color="gray")
         self.status_label.configure(text="Status: STOPPED", text_color="red")
         
@@ -1013,9 +1111,96 @@ class AladinGUI(ctk.CTk):
 
     def read_output(self, pipe, name):
         """Read stdout/stderr and put into queue"""
+        buffer_json = False
+        json_str = ""
         for line in iter(pipe.readline, ''):
-            self.log_queue.put(line)
+            if "___BACKTEST_RESULTS_JSON_START___" in line:
+                buffer_json = True
+                json_str = ""
+                continue
+            if "___BACKTEST_RESULTS_JSON_END___" in line:
+                buffer_json = False
+                # Parse JSON and send to UI thread
+                try:
+                    import json
+                    results = json.loads(json_str)
+                    self.after(0, lambda r=results: self.populate_results_table(r))
+                except Exception as e:
+                    self.log_queue.put(f"Error parsing GUI JSON: {e}\n")
+                continue
+                
+            if buffer_json:
+                json_str += line
+            else:
+                self.log_queue.put(line)
         pipe.close()
+
+    def populate_results_table(self, payload):
+        # Determine if we received the new dictionary format or the old list format
+        if isinstance(payload, dict) and 'trades' in payload:
+            trades_list = payload['trades']
+            summary = payload.get('summary', {})
+        else:
+            trades_list = payload
+            summary = {}
+
+        # Clear existing items
+        for item in self.results_tree.get_children():
+            self.results_tree.delete(item)
+            
+        total_pl = 0.0
+        trade_count = 0
+            
+        for row in trades_list:
+            pl = float(row.get('pl', 0))
+            total_pl += pl
+            trade_count += 1
+            
+            pl_str = f"${pl:.2f}"
+            side_str = str(row.get('side', '')).upper()
+            
+            entry_px = float(row.get('entry', 0))
+            exit_px = float(row.get('exit', 0))
+            
+            # Insert Row
+            item = self.results_tree.insert('', 'end', values=(
+                row.get('entry_time', '').replace('.000000',''),
+                row.get('exit_time', '').replace('.000000',''),
+                side_str,
+                f"{entry_px:.5f}",
+                f"{exit_px:.5f}",
+                pl_str,
+                str(row.get('exit_reason', '')).replace('_', ' ').title()
+            ))
+            
+            if pl < 0:
+                self.results_tree.item(item, tags=('loss',))
+            elif pl > 0:
+                self.results_tree.item(item, tags=('win',))
+                
+        self.results_tree.tag_configure('loss', foreground='#ff6b6b')
+        self.results_tree.tag_configure('win', foreground='#51cf66')
+        
+        # Format the summary string
+        if summary:
+            wins = summary.get('wins', 0)
+            losses = summary.get('losses', 0)
+            start_bal = summary.get('starting_balance', 0)
+            end_bal = summary.get('ending_balance', start_bal + total_pl)
+            
+            summary_text = (f"Initial Balance: ${start_bal:.2f} | Ending Balance: ${end_bal:.2f} | "
+                            f"Net Profit: ${total_pl:.2f} | Total Trades: {trade_count} "
+                            f"({wins} Won, {losses} Lost)")
+        else:
+            summary_text = f"Cumulative P/L: ${total_pl:.2f} | Total Trades: {trade_count}  [Live Processing]"
+            
+        self.results_summary_label.configure(
+            text=summary_text,
+            text_color="#51cf66" if total_pl >= 0 else "#ff6b6b"
+        )
+        
+        # Switch tab automatically
+        self.tabview.set("Backtest")
 
     def update_logs(self):
         """Check queue and update text widget"""
