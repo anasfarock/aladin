@@ -25,14 +25,18 @@ def identify_swing_points(df, lookback=10):
     swing_points = []
     min_distance = CONFIG['min_fib_candles']
     
+    highs = df['high'].values
+    lows = df['low'].values
+    times = df['time'].values
+    
     for i in range(lookback, len(df) - lookback):
-        current_high = df.iloc[i]['high']
-        current_low = df.iloc[i]['low']
+        current_high = highs[i]
+        current_low = lows[i]
         
         # Check for swing high
         is_swing_high = True
         for j in range(i - lookback, i + lookback + 1):
-            if j != i and df.iloc[j]['high'] > current_high:
+            if j != i and highs[j] > current_high:
                 is_swing_high = False
                 break
         
@@ -43,14 +47,14 @@ def identify_swing_points(df, lookback=10):
                 if bars_since_last >= min_distance:
                     swing_points.append({
                         'index': i,  # Index relative to input df
-                        'time': df.iloc[i]['time'],
+                        'time': times[i],
                         'price': current_high,
                         'type': 'high'
                     })
             else:
                 swing_points.append({
                     'index': i,
-                    'time': df.iloc[i]['time'],
+                    'time': times[i],
                     'price': current_high,
                     'type': 'high'
                 })
@@ -58,7 +62,7 @@ def identify_swing_points(df, lookback=10):
         # Check for swing low
         is_swing_low = True
         for j in range(i - lookback, i + lookback + 1):
-            if j != i and df.iloc[j]['low'] < current_low:
+            if j != i and lows[j] < current_low:
                 is_swing_low = False
                 break
         
@@ -69,14 +73,14 @@ def identify_swing_points(df, lookback=10):
                 if bars_since_last >= min_distance:
                     swing_points.append({
                         'index': i,
-                        'time': df.iloc[i]['time'],
+                        'time': times[i],
                         'price': current_low,
                         'type': 'low'
                     })
             else:
                 swing_points.append({
                     'index': i,
-                    'time': df.iloc[i]['time'],
+                    'time': times[i],
                     'price': current_low,
                     'type': 'low'
                 })

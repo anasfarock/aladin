@@ -50,17 +50,30 @@ class SymbolSelector(ctk.CTkFrame):
         
         search_term = self.search_var.get().lower()
         
-        for symbol in self.symbols_list:
-            if search_term in symbol.lower():
-                var = ctk.BooleanVar(value=symbol in self.selected_symbols)
-                cb = ctk.CTkCheckBox(
-                    self.scroll_frame, 
-                    text=symbol, 
-                    variable=var,
-                    command=lambda s=symbol, v=var: self.toggle_symbol(s, v)
-                )
-                cb.pack(anchor="w", pady=2)
-                self.checkboxes[symbol] = cb
+        # Filter symbols and cap to 100 max to prevent GUI freezing
+        matching_symbols = [s for s in self.symbols_list if search_term in s.lower()]
+        display_symbols = matching_symbols[:100]
+        
+        for symbol in display_symbols:
+            var = ctk.BooleanVar(value=symbol in self.selected_symbols)
+            cb = ctk.CTkCheckBox(
+                self.scroll_frame, 
+                text=symbol, 
+                variable=var,
+                command=lambda s=symbol, v=var: self.toggle_symbol(s, v)
+            )
+            cb.pack(anchor="w", pady=2)
+            self.checkboxes[symbol] = cb
+            
+        if len(matching_symbols) > 100:
+            info_label = ctk.CTkLabel(
+                self.scroll_frame, 
+                text=f"+{len(matching_symbols) - 100} more... (use search)",
+                text_color="gray"
+            )
+            info_label.pack(anchor="w", pady=5)
+            # Store it safely so it gets cleared next update
+            self.checkboxes["__INFO_LABEL__"] = info_label
 
     def toggle_symbol(self, symbol, var):
         if var.get():
@@ -72,7 +85,9 @@ class SymbolSelector(ctk.CTkFrame):
             
     def select_all(self):
         search_term = self.search_var.get().lower()
+        # Only select from the visible ones
         for symbol, cb in self.checkboxes.items():
+            if symbol == "__INFO_LABEL__": continue
             if search_term in symbol.lower():
                 cb.select()
                 self.selected_symbols.add(symbol)
@@ -81,7 +96,9 @@ class SymbolSelector(ctk.CTkFrame):
     
     def deselect_all(self):
         search_term = self.search_var.get().lower()
+        # Only deselect from the visible ones
         for symbol, cb in self.checkboxes.items():
+            if symbol == "__INFO_LABEL__": continue
             if search_term in symbol.lower():
                 cb.deselect()
                 self.selected_symbols.discard(symbol)
@@ -657,36 +674,36 @@ class AladinGUI(ctk.CTk):
         def _log(msg):
             self.log_message(msg)
 
-        try:
-            # Update UI from main thread
-            self.after(0, _update_ui, "Connecting to MT5...", "disabled")
-            
-            import MetaTrader5 as mt5
-            
-            if not mt5.initialize():
-                err = mt5.last_error()
-                self.after(0, _log, f"MT5 Init failed: {err}")
-                self.after(0, _update_ui, f"Connection Failed: {err}", "normal")
-                return
+        def _fetch_task():
+            try:
+                import MetaTrader5 as mt5
                 
-            symbols_info = mt5.symbols_get()
-            if symbols_info:
-                symbols_list = [s.name for s in symbols_info]
-                symbols_list.sort()
+                if not mt5.initialize():
+                    err = mt5.last_error()
+                    self.after(0, _log, f"MT5 Init failed: {err}")
+                    self.after(0, _update_ui, f"Connection Failed: {err}", "normal")
+                    return
+                    
+                symbols_info = mt5.symbols_get()
+                if symbols_info:
+                    symbols_list = [s.name for s in symbols_info]
+                    symbols_list.sort()
+                    
+                    # Update UI in main thread
+                    self.after(0, lambda: self._update_selector_ui(symbols_list))
+                else:
+                     self.after(0, _log, "No symbols found in MT5")
+                     self.after(0, _update_ui, "No symbols found", "normal")
+                     
+                mt5.shutdown()
                 
-                # Update UI in main thread
-                self.after(0, lambda: self._update_selector_ui(symbols_list))
-            else:
-                 self.after(0, _log, "No symbols found in MT5")
-                 self.after(0, _update_ui, "No symbols found", "normal")
-                 
-            mt5.shutdown()
-            
-        except Exception as e:
-            self.after(0, _log, f"Error fetching symbols: {e}")
-            self.after(0, _update_ui, "Error fetching symbols", "normal")
-        # finally block removed because state restoration is handled in callbacks above
-        # to ensure it happens in main thread in correct order
+            except Exception as e:
+                self.after(0, _log, f"Error fetching symbols: {e}")
+                self.after(0, _update_ui, "Error fetching symbols", "normal")
+                
+        # Start fetch in a background thread
+        _update_ui("Connecting to MT5...", "disabled")
+        threading.Thread(target=_fetch_task, daemon=True).start()
 
     def _update_selector_ui(self, symbols_list):
         # Create Selector

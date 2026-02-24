@@ -24,7 +24,7 @@ Usage:
 import argparse
 import sys
 from config import CONFIG, validate_config, MT5_AVAILABLE, logger
-from backtest import backtest
+from gpu_runner import backtest_gpu_runner as backtest
 from live_trading import start_live_trading
 
 def parse_arguments():
