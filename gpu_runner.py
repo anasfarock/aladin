@@ -259,49 +259,80 @@ def backtest_gpu_runner(symbol, start, end, timeframe):
         t['exit_price'] = ex['exit_price']
         t['exit_reason'] = ex['exit_reason']
         t['raw_pl'] = ex['pl'] # Unadjusted for dynamic sizing
+        t['exit_time'] = df.iloc[ex['exit_idx']]['time']
     
     logger.info("GPU Evaluation Complete. Applying sequentially dependent portfolio logic (Risk, Drawdown)...")
     
     balance = CONFIG['capital']
     trades = []
     active_positions = []
-    backtest_loss_tracker = DailyLossTracker()
+    
+    # Initialize loss tracker with the exact starting date of the backtest
+    start_date = df.iloc[0]['time'] if not df.empty else None
+    backtest_loss_tracker = DailyLossTracker(start_date=start_date)
     
     for t in potential_trades:
         entry_time = t['entry_time']
+        
+        # 1. Process all active positions that have CLOSED before or on exactly this entry bar
+        # Sort them by exit_idx so we process them chronologically
+        active_positions.sort(key=lambda x: x['exit_idx'])
+        
+        remaining_active = []
+        for ap in active_positions:
+            if ap['exit_idx'] <= t['entry_idx']:
+                # Trade closed, realize PnL
+                balance += ap['actual_pl']
+                if ap['actual_pl'] < 0:
+                    backtest_loss_tracker.record_loss(symbol, abs(ap['actual_pl']), simulated_date=ap['exit_time'])
+            else:
+                remaining_active.append(ap)
+                
+        active_positions = remaining_active
+        
+        # 2. Advance the daily loss tracker's internal date to current entry_time
         backtest_loss_tracker._check_and_reset_if_needed(entry_time)
         
-        # Clear closed trades from active limit (using exit idx)
-        active_positions = [ap for ap in active_positions if ap['exit_idx'] >= t['entry_idx']]
-        
-        # Check Daily Loss Limit
+        # 3. Check Daily Loss Limit
         can_trade, reason = backtest_loss_tracker.can_trade(symbol, entry_time)
         if not can_trade:
             continue
             
-        # Check Max Concurrent Trades
+        # 3.5 PREEMPTIVE LIMIT: Assess if currently open active trades would breach the limit if lost
+        max_daily_loss_count = CONFIG.get('max_daily_loss_count', -1)
+        max_daily_loss_count_per_symbol = CONFIG.get('max_daily_loss_count_per_symbol', -1)
+        
+        current_loss_count = backtest_loss_tracker.loss_count.get('global', 0)
+        symbol_loss_count = backtest_loss_tracker.loss_count.get(symbol, 0)
+        
+        open_positions_count = len(active_positions)
+        open_positions_symbol_count = len([p for p in active_positions if p.get('symbol', symbol) == symbol])
+        
+        if max_daily_loss_count != -1 and (current_loss_count + open_positions_count) >= max_daily_loss_count:
+            continue
+            
+        if max_daily_loss_count_per_symbol != -1 and (symbol_loss_count + open_positions_symbol_count) >= max_daily_loss_count_per_symbol:
+            continue
+            
+        # 4. Check Max Concurrent Trades
         if len(active_positions) >= CONFIG['max_concurrent_trades']:
             continue
             
-        # We take the trade in sequence, calculate precise units based on dynamic balance
+        # 5. Take the trade
         risk_amount = (CONFIG['risk_pct'] / 100.0) * balance
         units = risk_amount / t['risk_per_unit']
         
-        actual_pl = t['raw_pl'] * units
-        balance += actual_pl
+        t['actual_pl'] = t['raw_pl'] * units
         
-        if actual_pl < 0:
-            backtest_loss_tracker.record_loss(symbol, abs(actual_pl))
-            
         active_positions.append(t)
         
         trades.append({
             'entry_time': entry_time,
-            'exit_time': df.iloc[t['exit_idx']]['time'],
+            'exit_time': t['exit_time'],
             'side': 'long' if t['side'] == 1 else 'short',
             'entry': t['entry'],
             'exit': t['exit_price'],
-            'pl': actual_pl,
+            'pl': t['actual_pl'],
             'exit_reason': t['exit_reason'],
             'fib_level': t['fib_level'],
             'setup_type': t['setup_type'],
@@ -309,6 +340,10 @@ def backtest_gpu_runner(symbol, start, end, timeframe):
             'adx_passed': t['adx_passed'],
             'stop_method': t['stop_method']
         })
+
+    # Ensure remaining open trades realize their PnL for final aggregate calculations
+    for ap in active_positions:
+        balance += ap['actual_pl']
         
     trades_df = pd.DataFrame(trades)
     

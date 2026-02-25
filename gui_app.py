@@ -660,9 +660,10 @@ class AladinGUI(ctk.CTk):
         
         # Add Treeview Table
         import tkinter.ttk as ttk
-        columns = ('entry_time', 'exit_time', 'side', 'entry', 'exit', 'pl', 'exit_reason')
+        columns = ('symbol', 'entry_time', 'exit_time', 'side', 'entry', 'exit', 'pl', 'exit_reason')
         self.results_tree = ttk.Treeview(parent, columns=columns, show='headings', height=10)
         
+        self.results_tree.heading('symbol', text='Symbol')
         self.results_tree.heading('entry_time', text='Entry Time')
         self.results_tree.heading('exit_time', text='Exit Time')
         self.results_tree.heading('side', text='Side')
@@ -671,6 +672,7 @@ class AladinGUI(ctk.CTk):
         self.results_tree.heading('pl', text='P/L ($)')
         self.results_tree.heading('exit_reason', text='Reason')
         
+        self.results_tree.column('symbol', width=80, anchor='center')
         self.results_tree.column('entry_time', width=130, anchor='center')
         self.results_tree.column('exit_time', width=130, anchor='center')
         self.results_tree.column('side', width=70, anchor='center')
@@ -1164,6 +1166,7 @@ class AladinGUI(ctk.CTk):
             
             # Insert Row
             item = self.results_tree.insert('', 'end', values=(
+                str(row.get('symbol', '')),
                 row.get('entry_time', '').replace('.000000',''),
                 row.get('exit_time', '').replace('.000000',''),
                 side_str,

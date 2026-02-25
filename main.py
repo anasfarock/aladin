@@ -540,30 +540,69 @@ def main():
         if CONFIG['backtest']:
             # Run backtest
             logger.info("Starting backtest mode...")
-            trades_df, summary = backtest(
-                CONFIG['symbol'],
-                CONFIG['start'],
-                CONFIG['end'],
-                CONFIG['timeframe_entry']
-            )
             
-            if len(trades_df) > 0:
-                logger.info(f"\nFound {len(trades_df)} trades. Sending payload to GUI...")
+            import pandas as pd
+            all_trades = []
+            symbols_to_test = CONFIG.get('symbols', [CONFIG['symbol']])
+            
+            combined_summary = {
+                'starting_balance': CONFIG['capital'],
+                'ending_balance': CONFIG['capital'],
+                'total_profit': 0.0,
+                'total_trades': 0,
+                'wins': 0, 'losses': 0,
+                'fib_levels': {'0.618': 0, '0.705': 0, '0.786': 0},
+                'exit_reasons': {'take_profit': 0, 'stop_loss': 0, 'trailing_stop': 0},
+                'trend_system': {'manual': 0, 'automatic': 0},
+                'adx_filter': {'filtered': 0, 'passed': 0, 'info_only': 0},
+                'macro_filter': {'filtered': 0},
+                'stop_methods': {'atr': 0, 'fibonacci': 0}
+            }
+            
+            for sym in symbols_to_test:
+                logger.info(f"--- Backtesting {sym} ---")
+                trades_df, sym_summary = backtest(
+                    sym,
+                    CONFIG['start'],
+                    CONFIG['end'],
+                    CONFIG['timeframe_entry']
+                )
+                
+                if len(trades_df) > 0:
+                    trades_df['symbol'] = sym
+                    all_trades.append(trades_df)
+                    
+                    if sym_summary:
+                        combined_summary['total_profit'] += sym_summary.get('total_profit', 0)
+                        combined_summary['total_trades'] += sym_summary.get('total_trades', 0)
+                        combined_summary['wins'] += sym_summary.get('wins', 0)
+                        combined_summary['losses'] += sym_summary.get('losses', 0)
+                        
+            if all_trades:
+                final_df = pd.concat(all_trades, ignore_index=True)
+                final_df = final_df.sort_values(by='entry_time').reset_index(drop=True)
+                
+                # Recalculate combined stats
+                combined_summary['ending_balance'] = combined_summary['starting_balance'] + combined_summary['total_profit']
+                
+                logger.info(f"\nFound {len(final_df)} trades total across {len(symbols_to_test)} symbols. Sending payload to GUI...")
                 # Format datetime column correctly for JSON dumping
-                if 'entry_time' in trades_df.columns:
-                    trades_df['entry_time'] = trades_df['entry_time'].astype(str)
-                if 'exit_time' in trades_df.columns:
-                    trades_df['exit_time'] = trades_df['exit_time'].astype(str)
+                if 'entry_time' in final_df.columns:
+                    final_df['entry_time'] = final_df['entry_time'].astype(str)
+                if 'exit_time' in final_df.columns:
+                    final_df['exit_time'] = final_df['exit_time'].astype(str)
                     
                 import json
                 payload = {
-                    'trades': trades_df.to_dict('records'),
-                    'summary': summary
+                    'trades': final_df.to_dict('records'),
+                    'summary': combined_summary
                 }
                 # Important: Print to stdout so GUI picks it up
                 print("___BACKTEST_RESULTS_JSON_START___")
                 print(json.dumps(payload))
                 print("___BACKTEST_RESULTS_JSON_END___")
+            else:
+                logger.info("No trades found in backtest period.")
         
         else:
             # Run live trading

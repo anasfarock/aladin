@@ -28,10 +28,20 @@ class DailyLossTracker:
     IMPORTANT: This tracks LOSING TRADES only, NOT position count
     """
     
-    def __init__(self):
+    def __init__(self, start_date=None):
         self.daily_losses = defaultdict(float)  # 'global' -> total losses, 'EURUSD' -> pair-specific losses
         self.loss_count = defaultdict(int)      # Count of LOSING trades (not total trades)
-        self.last_reset_date = date.today()
+        
+        if start_date is not None:
+            if hasattr(start_date, 'date'):
+                self.last_reset_date = start_date.date()
+            elif isinstance(start_date, str):
+                self.last_reset_date = datetime.fromisoformat(start_date).date()
+            else:
+                self.last_reset_date = start_date
+        else:
+            self.last_reset_date = date.today()
+            
         self.closed_trades = defaultdict(list)  # Track closed trades for auditing
     
     def load_history_from_mt5(self):
@@ -123,9 +133,16 @@ class DailyLossTracker:
     def _check_and_reset_if_needed(self, simulated_date=None):
         """Check if it's a new day and reset counters"""
         if simulated_date is not None:
-            # Handle pandas Timestamp
+            # Handle pandas Timestamp or standard datetime
             if hasattr(simulated_date, 'date'):
                 current_date = simulated_date.date()
+            elif isinstance(simulated_date, str):
+                try:
+                    current_date = datetime.fromisoformat(simulated_date).date()
+                except ValueError:
+                    # Fallback for pandas string representations
+                    import pandas as pd
+                    current_date = pd.to_datetime(simulated_date).date()
             else:
                 current_date = simulated_date
         else:
@@ -154,15 +171,16 @@ class DailyLossTracker:
         self.last_reset_date = current_date
         logger.info(f"Daily loss counters reset for {current_date}")
     
-    def record_loss(self, symbol, loss_amount):
+    def record_loss(self, symbol, loss_amount, simulated_date=None):
         """
         Record a LOSING trade (only for trades that lost money)
         
         Args:
             symbol: Trading pair (e.g., 'EURUSD')
             loss_amount: Loss amount (positive value, e.g., 50.00 not -50.00)
+            simulated_date: Optional datetime object for backtesting
         """
-        self._check_and_reset_if_needed()
+        self._check_and_reset_if_needed(simulated_date)
         
         if loss_amount <= 0:
             logger.warning(f"Invalid loss amount: {loss_amount}. Skipping record.")
@@ -176,15 +194,17 @@ class DailyLossTracker:
         self.daily_losses[symbol] += loss_amount
         self.loss_count[symbol] += 1
         
+        timestamp_to_use = simulated_date if simulated_date is not None else datetime.now()
+        
         # Track for auditing
         self.closed_trades['global'].append({
-            'timestamp': datetime.now(),
+            'timestamp': timestamp_to_use,
             'symbol': symbol,
             'loss': loss_amount,
             'type': 'loss'
         })
         self.closed_trades[symbol].append({
-            'timestamp': datetime.now(),
+            'timestamp': timestamp_to_use,
             'loss': loss_amount,
             'type': 'loss'
         })
