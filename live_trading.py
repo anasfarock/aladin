@@ -236,16 +236,15 @@ def _monitor_closed_trades(symbol):
         # Fetch deals from the last 24 hours to be safe
         from_date = datetime.now() - timedelta(days=1)
         
-        # CRITICAL FIX: Use group parameter to filter by symbol
-        # This is the correct way to filter deals in MT5 Python API
-        deals = mt5.history_deals_get(from_date, datetime.now(), group=symbol)
+        # CRITICAL FIX: Fetch ALL deals globally, not just `group=symbol`, to accumulate multi-pair global limits
+        deals = mt5.history_deals_get(from_date, datetime.now())
 
         if deals is None:
-            logger.debug(f"No deals found for {symbol} in history.")
+            logger.debug(f"No deals found in history.")
             return
 
         if len(deals) == 0:
-            logger.debug(f"No deals found for {symbol} in the last 24 hours.")
+            logger.debug(f"No deals found in the last 24 hours.")
             return
 
         # Filter for:
@@ -340,9 +339,7 @@ def _monitor_closed_trades_fallback(symbol):
             if deal.ticket in processed_deals:
                 continue
             
-            # Only process this specific symbol
-            if deal.symbol != symbol:
-                continue
+            # CRITICAL FIX: We deliberately want to process ALL symbols to tally global daily limits
             
             # Only process our bot's trades (magic number 234000)
             if deal.magic != 234000:

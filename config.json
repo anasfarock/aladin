@@ -53,5 +53,5 @@
         "USDCAD"
     ],
     "symbol": "GBPUSD",
-    "trading_enabled": false
+    "trading_enabled": true
 }

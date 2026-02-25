@@ -28,10 +28,18 @@ class DailyLossTracker:
     IMPORTANT: This tracks LOSING TRADES only, NOT position count
     """
     
+    # Class-level dictionaries to persistently share state across multiple symbol instances during sequential backtesting
+    _shared_daily_losses = defaultdict(lambda: defaultdict(float))
+    _shared_loss_counts = defaultdict(lambda: defaultdict(int))
+    _shared_closed_trades = defaultdict(lambda: defaultdict(list))
+    
+    @classmethod
+    def clear_shared_state(cls):
+        cls._shared_daily_losses.clear()
+        cls._shared_loss_counts.clear()
+        cls._shared_closed_trades.clear()
+    
     def __init__(self, start_date=None):
-        self.daily_losses = defaultdict(float)  # 'global' -> total losses, 'EURUSD' -> pair-specific losses
-        self.loss_count = defaultdict(int)      # Count of LOSING trades (not total trades)
-        
         if start_date is not None:
             if hasattr(start_date, 'date'):
                 self.last_reset_date = start_date.date()
@@ -42,7 +50,17 @@ class DailyLossTracker:
         else:
             self.last_reset_date = date.today()
             
-        self.closed_trades = defaultdict(list)  # Track closed trades for auditing
+    @property
+    def daily_losses(self):
+        return self._shared_daily_losses[self.last_reset_date]
+        
+    @property
+    def loss_count(self):
+        return self._shared_loss_counts[self.last_reset_date]
+        
+    @property
+    def closed_trades(self):
+        return self._shared_closed_trades[self.last_reset_date]
     
     def load_history_from_mt5(self):
         """
@@ -152,12 +170,12 @@ class DailyLossTracker:
             self._reset_daily_counters(current_date)
     
     def _reset_daily_counters(self, current_date):
-        """Reset daily loss tracking"""
+        """Advance the date pointer (DO NOT clear data, as previous symbols need it in backtest)"""
         if self.daily_losses or self.loss_count:
             logger.info(f"")
             logger.info(f"{'='*70}")
-            logger.info(f"📅 NEW DAY - RESETTING DAILY LOSS COUNTERS")
-            logger.info(f"Previous day summary:")
+            logger.info(f"📅 NEW DAY - ADVANCED LOSS COUNTERS TO {current_date}")
+            logger.info(f"Previous day ({self.last_reset_date}) summary:")
             logger.info(f"  Global losses: ${self.daily_losses.get('global', 0):.2f}")
             logger.info(f"  Global loss count: {self.loss_count.get('global', 0)} losing trades")
             for symbol in self.daily_losses:
@@ -165,11 +183,7 @@ class DailyLossTracker:
                     logger.info(f"  {symbol}: ${self.daily_losses[symbol]:.2f} ({self.loss_count[symbol]} losing trades)")
             logger.info(f"{'='*70}")
         
-        self.daily_losses.clear()
-        self.loss_count.clear()
-        self.closed_trades.clear()
         self.last_reset_date = current_date
-        logger.info(f"Daily loss counters reset for {current_date}")
     
     def record_loss(self, symbol, loss_amount, simulated_date=None):
         """
@@ -244,28 +258,30 @@ class DailyLossTracker:
         logger.debug(f"  Global: ${current_daily_losses:.2f}/{max_daily_losses if max_daily_losses > 0 else 'unlimited'} | {current_loss_count}/{max_daily_loss_count if max_daily_loss_count > 0 else 'unlimited'} losses")
         logger.debug(f"  {symbol}: ${symbol_daily_losses:.2f}/{max_daily_losses_per_symbol if max_daily_losses_per_symbol > 0 else 'unlimited'} | {symbol_loss_count}/{max_daily_loss_count_per_symbol if max_daily_loss_count_per_symbol > 0 else 'unlimited'} losses")
         
-        # -1 means unlimited
-        if (max_daily_losses == -1 and max_daily_losses_per_symbol == -1 and
-            max_daily_loss_count == -1 and max_daily_loss_count_per_symbol == -1):
+        # -1 or 0 usually means unlimited in these configs for max limits
+        has_any_limit = (max_daily_losses > 0 or max_daily_losses_per_symbol > 0 or 
+                         max_daily_loss_count > 0 or max_daily_loss_count_per_symbol > 0)
+                         
+        if not has_any_limit:
             return True, "✓ No daily loss limits configured"
         
         # Check global daily loss limit
-        if max_daily_losses != -1 and current_daily_losses >= max_daily_losses:
+        if max_daily_losses > 0 and current_daily_losses >= max_daily_losses:
             return False, (f"⛔ Global daily loss limit reached: "
                          f"${current_daily_losses:.2f}/${max_daily_losses:.2f}")
         
         # Check global daily loss count limit (THIS IS THE LOSING TRADE COUNT)
-        if max_daily_loss_count != -1 and current_loss_count >= max_daily_loss_count:
+        if max_daily_loss_count > 0 and current_loss_count >= max_daily_loss_count:
             return False, (f"⛔ Global daily loss count limit reached: "
                          f"{current_loss_count}/{max_daily_loss_count} losing trades")
         
         # Check per-symbol daily loss limit
-        if max_daily_losses_per_symbol != -1 and symbol_daily_losses >= max_daily_losses_per_symbol:
+        if max_daily_losses_per_symbol > 0 and symbol_daily_losses >= max_daily_losses_per_symbol:
             return False, (f"⛔ Daily loss limit for {symbol} reached: "
                          f"${symbol_daily_losses:.2f}/${max_daily_losses_per_symbol:.2f}")
         
         # Check per-symbol daily loss count limit (THIS IS THE LOSING TRADE COUNT FOR THE SYMBOL)
-        if max_daily_loss_count_per_symbol != -1 and symbol_loss_count >= max_daily_loss_count_per_symbol:
+        if max_daily_loss_count_per_symbol > 0 and symbol_loss_count >= max_daily_loss_count_per_symbol:
             return False, (f"⛔ Daily loss count limit for {symbol} reached: "
                          f"{symbol_loss_count}/{max_daily_loss_count_per_symbol} losing trades")
         
