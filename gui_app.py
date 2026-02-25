@@ -9,7 +9,9 @@ import threading
 import queue
 import matplotlib
 matplotlib.use("TkAgg")
-from config import CONFIG
+from config import CONFIG, MT5_AVAILABLE
+from datetime import datetime
+import MetaTrader5 as mt5
 
 # Set appearance mode and color theme
 ctk.set_appearance_mode("Dark")  # Modes: "System" (standard), "Dark", "Light"
@@ -131,6 +133,12 @@ class AladinGUI(ctk.CTk):
         
         # Auto-fetch symbols on startup (delayed slightly to let UI render)
         self.after(500, lambda: threading.Thread(target=self.fetch_symbols_from_mt5, daemon=True).start())
+        
+        # Start MT5 clock updater
+        if MT5_AVAILABLE:
+            if not mt5.initialize():
+                mt5.initialize()
+            self.after(1000, self.update_mt5_time)
 
     def create_widgets(self):
         # Configure grid layout (1x2)
@@ -140,7 +148,7 @@ class AladinGUI(ctk.CTk):
         # Sidebar setup
         self.sidebar_frame = ctk.CTkFrame(self, width=200, corner_radius=0)
         self.sidebar_frame.grid(row=0, column=0, sticky="nsew")
-        self.sidebar_frame.grid_rowconfigure(6, weight=1)
+        self.sidebar_frame.grid_rowconfigure(8, weight=1)
 
         self.logo_label = ctk.CTkLabel(self.sidebar_frame, text="Aladin Bot", font=ctk.CTkFont(size=20, weight="bold"))
         self.logo_label.grid(row=0, column=0, padx=20, pady=(20, 10))
@@ -148,18 +156,25 @@ class AladinGUI(ctk.CTk):
         # Status Label
         self.status_label = ctk.CTkLabel(self.sidebar_frame, text="Bot Status: STOPPED", text_color="red")
         self.status_label.grid(row=1, column=0, padx=20, pady=10)
+        
+        # MT5 Broker Time Panel
+        self.mt5_server_label = ctk.CTkLabel(self.sidebar_frame, text="Server: Connecting...", font=ctk.CTkFont(size=11), text_color="gray")
+        self.mt5_server_label.grid(row=2, column=0, padx=20, pady=(0, 2))
+        
+        self.mt5_time_label = ctk.CTkLabel(self.sidebar_frame, text="--:--:--", font=ctk.CTkFont(size=14, weight="bold"), text_color="#1f6aa5")
+        self.mt5_time_label.grid(row=3, column=0, padx=20, pady=(0, 20))
 
         # Control Buttons
         self.start_button = ctk.CTkButton(self.sidebar_frame, text="Start Bot Process", command=self.start_bot, fg_color="green", hover_color="darkgreen")
-        self.start_button.grid(row=2, column=0, padx=20, pady=10)
+        self.start_button.grid(row=4, column=0, padx=20, pady=10)
 
         self.stop_button = ctk.CTkButton(self.sidebar_frame, text="Stop Bot Process", command=self.stop_bot, fg_color="darkred", hover_color="red", state="disabled")
-        self.stop_button.grid(row=3, column=0, padx=20, pady=10)
+        self.stop_button.grid(row=5, column=0, padx=20, pady=10)
         
         # Trading Toggle Switch
-        ctk.CTkLabel(self.sidebar_frame, text="Trading Execution:", font=ctk.CTkFont(size=12, weight="bold")).grid(row=4, column=0, padx=20, pady=(20,0))
+        ctk.CTkLabel(self.sidebar_frame, text="Trading Execution:", font=ctk.CTkFont(size=12, weight="bold")).grid(row=6, column=0, padx=20, pady=(20,0))
         self.trading_switch = ctk.CTkSwitch(self.sidebar_frame, text="DISABLED", command=self.toggle_trading, onvalue="ENABLED", offvalue="DISABLED")
-        self.trading_switch.grid(row=5, column=0, padx=20, pady=10)
+        self.trading_switch.grid(row=7, column=0, padx=20, pady=10)
         # Default to Config state
         if CONFIG.get('trading_enabled', False):
             self.trading_switch.select()
@@ -170,7 +185,7 @@ class AladinGUI(ctk.CTk):
         
         # Save Config Button
         self.save_button = ctk.CTkButton(self.sidebar_frame, text="Save Config", command=self.save_config)
-        self.save_button.grid(row=7, column=0, padx=20, pady=10)
+        self.save_button.grid(row=9, column=0, padx=20, pady=10) # Adjusted row
 
         # Main Content Area (Tabs)
         self.tabview = ctk.CTkTabview(self)
@@ -1258,6 +1273,61 @@ class AladinGUI(ctk.CTk):
                 
         # Switch tab automatically
         self.tabview.set("Backtest")
+
+    def update_mt5_time(self):
+        """Fetch MT5 broker time and update sidebar label every second"""
+        if not MT5_AVAILABLE:
+            return
+            
+        try:
+            # If MT5 lost connection or needs initialization
+            if mt5.account_info() is None:
+                mt5.initialize()
+                
+            acc_info = mt5.account_info()
+            if acc_info is not None:
+                self.mt5_server_label.configure(text=f"Server: {acc_info.server}")
+            else:
+                self.mt5_server_label.configure(text=f"Server: Disconnected")
+            
+            from datetime import timezone
+            utc_now = datetime.now(timezone.utc).timestamp()
+                
+            # Initialize or refresh broker offset occasionally
+            if not hasattr(self, 'broker_time_offset') or self.broker_time_offset is None:
+                symbol_to_check = "EURUSD"
+                if hasattr(self, 'symbol_selector') and self.symbol_selector:
+                    selected = self.symbol_selector.get_selected()
+                    if selected:
+                        symbol_to_check = selected[0]
+                
+                mt5.symbol_select(symbol_to_check, True)
+                tick = mt5.symbol_info_tick(symbol_to_check)
+                
+                if tick and tick.time > 0:
+                    # Calculate true offset
+                    offset_seconds = tick.time - utc_now
+                    # Snap to nearest hour for the timezone label
+                    self.broker_tz_hours = round(offset_seconds / 3600)
+                    # We store the exact fractional offset to drift-correct local PC time into Broker time
+                    self.broker_time_offset = offset_seconds
+            
+            if hasattr(self, 'broker_time_offset') and self.broker_time_offset is not None:
+                tz_string = f"UTC+{self.broker_tz_hours}" if self.broker_tz_hours >= 0 else f"UTC{self.broker_tz_hours}"
+                
+                # Derive smooth broker time by adding the established offset to local smooth clock
+                smooth_broker_unix = utc_now + self.broker_time_offset
+                broker_time = datetime.fromtimestamp(smooth_broker_unix, tz=timezone.utc)
+                self.mt5_time_label.configure(text=f"{broker_time.strftime('%H:%M:%S')}  |  {tz_string}")
+            else:
+                self.mt5_time_label.configure(text="Waiting for Sync...")
+                
+        except Exception as e:
+            self.mt5_server_label.configure(text="MT5 Error")
+            self.mt5_time_label.configure(text="--:--:--")
+            
+        # Schedule next update in 1 second
+        self.after(1000, self.update_mt5_time)
 
     def update_logs(self):
         """Check queue and update text widget"""
