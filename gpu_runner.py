@@ -298,22 +298,6 @@ def backtest_gpu_runner(symbol, start, end, timeframe):
         if not can_trade:
             continue
             
-        # 3.5 PREEMPTIVE LIMIT: Assess if currently open active trades would breach the limit if lost
-        max_daily_loss_count = CONFIG.get('max_daily_loss_count', -1)
-        max_daily_loss_count_per_symbol = CONFIG.get('max_daily_loss_count_per_symbol', -1)
-        
-        current_loss_count = backtest_loss_tracker.loss_count.get('global', 0)
-        symbol_loss_count = backtest_loss_tracker.loss_count.get(symbol, 0)
-        
-        open_positions_count = len(active_positions)
-        open_positions_symbol_count = len([p for p in active_positions if p.get('symbol', symbol) == symbol])
-        
-        if max_daily_loss_count != -1 and (current_loss_count + open_positions_count) >= max_daily_loss_count:
-            continue
-            
-        if max_daily_loss_count_per_symbol != -1 and (symbol_loss_count + open_positions_symbol_count) >= max_daily_loss_count_per_symbol:
-            continue
-            
         # 4. Check Max Concurrent Trades
         if len(active_positions) >= CONFIG['max_concurrent_trades']:
             continue

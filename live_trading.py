@@ -400,37 +400,9 @@ def live_run_once(symbol):
     # ===== CHECK 1: DAILY LOSS LIMITS =====
     can_trade, loss_limit_reason = check_daily_loss_limit(symbol)
     
-    # Preemptive Check: Assume all open positions for this symbol could lose, and add them to the count
-    from risk_management import daily_loss_tracker, get_open_positions
-    max_daily_loss_count = CONFIG.get('max_daily_loss_count', -1)
-    max_daily_loss_count_per_symbol = CONFIG.get('max_daily_loss_count_per_symbol', -1)
-    
-    current_loss_count = daily_loss_tracker.loss_count.get('global', 0)
-    symbol_loss_count = daily_loss_tracker.loss_count.get(symbol, 0)
-    
-    open_positions = get_open_positions() if MT5_AVAILABLE else []
-    if open_positions is None: open_positions = []
-    our_positions = [p for p in open_positions if p.magic == 234000]
-    
-    open_positions_count = len(our_positions)
-    open_positions_symbol_count = len([p for p in our_positions if p.symbol == symbol])
-    
-    preemptive_global_limit_hit = (max_daily_loss_count != -1) and ((current_loss_count + open_positions_count) >= max_daily_loss_count)
-    preemptive_symbol_limit_hit = (max_daily_loss_count_per_symbol != -1) and ((symbol_loss_count + open_positions_symbol_count) >= max_daily_loss_count_per_symbol)
-    
     logger.info(f"1️⃣  Daily Loss Limit: {loss_limit_reason}")
     if not can_trade:
         logger.warning(f"   ⛔ BLOCKED - {loss_limit_reason}")
-        logger.info("="*70)
-        return None
-        
-    if preemptive_global_limit_hit:
-        logger.warning(f"   ⛔ BLOCKED - Preemptive Global Limit: {current_loss_count} realized + {open_positions_count} open trades >= {max_daily_loss_count} max allowed losses.")
-        logger.info("="*70)
-        return None
-        
-    if preemptive_symbol_limit_hit:
-        logger.warning(f"   ⛔ BLOCKED - Preemptive Symbol Limit: {symbol_loss_count} realized + {open_positions_symbol_count} open trades >= {max_daily_loss_count_per_symbol} max allowed losses.")
         logger.info("="*70)
         return None
     
