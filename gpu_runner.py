@@ -369,11 +369,20 @@ def backtest_gpu_runner(symbol, start, end, timeframe):
         adx_info_trades = len(trades_df[trades_df.get('adx_passed', False) == False])
         atr_stopped_trades = len(trades_df[trades_df.get('stop_method', 'Fibonacci') == 'ATR'])
         fib_stopped_trades = len(trades_df[trades_df.get('stop_method', 'Fibonacci') == 'Fibonacci'])
+        
+        if not winning_trades.empty:
+            winning_hours = pd.to_datetime(winning_trades['entry_time']).dt.hour
+            most_wins_hour = winning_hours.mode()[0] if not winning_hours.empty else None
+            best_time_str = f"{most_wins_hour:02d}:00" if most_wins_hour is not None else "N/A"
+        else:
+            best_time_str = "N/A"
+            
     else:
         wins = losses = win_rate = avg_win = avg_loss = profit_factor = total_profit = max_dd = avg_rr = 0
         fib_618_trades = fib_705_trades = fib_786_trades = 0
         trailing_stops = take_profits = stop_losses = 0
         manual_trades = auto_trades = adx_passed_trades = adx_info_trades = atr_stopped_trades = fib_stopped_trades = 0
+        best_time_str = "N/A"
 
     summary = {
         'starting_balance': CONFIG['capital'],
@@ -388,6 +397,7 @@ def backtest_gpu_runner(symbol, start, end, timeframe):
         'profit_factor': profit_factor,
         'max_drawdown': max_dd,
         'avg_rr_ratio': avg_rr,
+        'best_time_of_day': best_time_str,
         'fib_levels': {
             '0.618': fib_618_trades,
             '0.705': fib_705_trades,

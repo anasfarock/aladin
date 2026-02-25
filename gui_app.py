@@ -654,9 +654,42 @@ class AladinGUI(ctk.CTk):
         self.export_btn = ctk.CTkButton(btn_frame, text="Export CSV", command=self.export_backtest_csv)
         self.export_btn.pack(side="left", fill="x", expand=True, padx=5)
         
-        # Header Label for Results
-        self.results_summary_label = ctk.CTkLabel(parent, text="Cumulative P/L: $0.00 | Total Trades: 0", font=ctk.CTkFont(weight="bold"))
-        self.results_summary_label.grid(row=4, column=0, columnspan=2, pady=(10, 5))
+        # Dashboard Analytics Frame
+        self.dashboard_frame = ctk.CTkFrame(parent, fg_color="transparent")
+        self.dashboard_frame.grid(row=4, column=0, columnspan=2, pady=(5, 10), padx=10, sticky="ew")
+        
+        # Configure columns for 5 cards
+        for i in range(5):
+            self.dashboard_frame.columnconfigure(i, weight=1)
+            
+        def create_stat_card(parent_frame, title, row, col):
+            card = ctk.CTkFrame(parent_frame, corner_radius=10)
+            card.grid(row=row, column=col, padx=5, pady=5, sticky="ew")
+            
+            title_label = ctk.CTkLabel(card, text=title, font=ctk.CTkFont(size=11, weight="bold"), text_color="gray")
+            title_label.pack(pady=(5, 0))
+            
+            val_label = ctk.CTkLabel(card, text="-", font=ctk.CTkFont(size=16, weight="bold"))
+            val_label.pack(pady=(0, 5))
+            
+            return val_label
+            
+        # Row 0: Performance
+        self.lbl_winrate = create_stat_card(self.dashboard_frame, "Win Rate", 0, 0)
+        self.lbl_pnl = create_stat_card(self.dashboard_frame, "Net Profit", 0, 1)
+        self.lbl_rr = create_stat_card(self.dashboard_frame, "Avg R:R", 0, 2)
+        self.lbl_profit_factor = create_stat_card(self.dashboard_frame, "Profit Factor", 0, 3)
+        self.lbl_best_time = create_stat_card(self.dashboard_frame, "Best Time", 0, 4)
+        
+        # Row 1: Volume & Equity
+        self.lbl_start_bal = create_stat_card(self.dashboard_frame, "Initial Balance", 1, 0)
+        self.lbl_end_bal = create_stat_card(self.dashboard_frame, "Ending Balance", 1, 1)
+        self.lbl_trades = create_stat_card(self.dashboard_frame, "Total Trades", 1, 2)
+        self.lbl_wins = create_stat_card(self.dashboard_frame, "Wins", 1, 3)
+        self.lbl_losses = create_stat_card(self.dashboard_frame, "Losses", 1, 4)
+        
+        # We no longer need the generic text summary label since it's entirely visual now.
+        # But we keep a hidden label or just rely on cards for updates.
         
         # Add Treeview Table
         import tkinter.ttk as ttk
@@ -702,8 +735,8 @@ class AladinGUI(ctk.CTk):
         scrollbar = ttk.Scrollbar(parent, orient="vertical", command=self.results_tree.yview)
         self.results_tree.configure(yscrollcommand=scrollbar.set)
         
-        self.results_tree.grid(row=5, column=0, columnspan=2, sticky="nsew", padx=10, pady=5)
-        scrollbar.grid(row=5, column=2, sticky="ns", pady=5)
+        self.results_tree.grid(row=6, column=0, columnspan=2, sticky="nsew", padx=10, pady=5)
+        scrollbar.grid(row=6, column=2, sticky="ns", pady=5)
 
     def export_backtest_csv(self):
         import csv
@@ -1190,18 +1223,39 @@ class AladinGUI(ctk.CTk):
             losses = summary.get('losses', 0)
             start_bal = summary.get('starting_balance', 0)
             end_bal = summary.get('ending_balance', start_bal + total_pl)
+            win_rate = summary.get('win_rate', 0)
+            avg_rr = summary.get('avg_rr_ratio', 0)
+            profit_factor = summary.get('profit_factor', 0)
+            best_time = summary.get('best_time_of_day', 'N/A')
             
-            summary_text = (f"Initial Balance: ${start_bal:.2f} | Ending Balance: ${end_bal:.2f} | "
-                            f"Net Profit: ${total_pl:.2f} | Total Trades: {trade_count} "
-                            f"({wins} Won, {losses} Lost)")
+            # Update Row 1 Dashboard Cards
+            self.lbl_winrate.configure(text=f"{win_rate:.1f}%", text_color="#51cf66" if win_rate >= 50 else "#ff6b6b")
+            self.lbl_pnl.configure(text=f"${total_pl:.2f}", text_color="#51cf66" if total_pl >= 0 else "#ff6b6b")
+            self.lbl_rr.configure(text=f"{avg_rr:.2f}")
+            self.lbl_profit_factor.configure(text=f"{profit_factor:.2f}", text_color="#51cf66" if profit_factor >= 1 else "#ff6b6b")
+            self.lbl_best_time.configure(text=str(best_time))
+            
+            # Update Row 2 Dashboard Cards
+            self.lbl_start_bal.configure(text=f"${start_bal:.2f}")
+            self.lbl_end_bal.configure(text=f"${end_bal:.2f}", text_color="#51cf66" if end_bal >= start_bal else "#ff6b6b")
+            self.lbl_trades.configure(text=str(trade_count))
+            self.lbl_wins.configure(text=str(wins), text_color="#51cf66")
+            self.lbl_losses.configure(text=str(losses), text_color="#ff6b6b")
+            
         else:
-            summary_text = f"Cumulative P/L: ${total_pl:.2f} | Total Trades: {trade_count}  [Live Processing]"
-            
-        self.results_summary_label.configure(
-            text=summary_text,
-            text_color="#51cf66" if total_pl >= 0 else "#ff6b6b"
-        )
-        
+            if hasattr(self, 'lbl_winrate'):
+                self.lbl_winrate.configure(text="-", text_color="white")
+                self.lbl_pnl.configure(text=f"${total_pl:.2f}", text_color="#51cf66" if total_pl >= 0 else "#ff6b6b")
+                self.lbl_rr.configure(text="-", text_color="white")
+                self.lbl_profit_factor.configure(text="-", text_color="white")
+                self.lbl_best_time.configure(text="-", text_color="white")
+                
+                self.lbl_start_bal.configure(text="-", text_color="white")
+                self.lbl_end_bal.configure(text="-", text_color="white")
+                self.lbl_trades.configure(text=str(trade_count), text_color="white")
+                self.lbl_wins.configure(text="-", text_color="white")
+                self.lbl_losses.configure(text="-", text_color="white")
+                
         # Switch tab automatically
         self.tabview.set("Backtest")
 

@@ -585,6 +585,38 @@ def main():
                 # Recalculate combined stats
                 combined_summary['ending_balance'] = combined_summary['starting_balance'] + combined_summary['total_profit']
                 
+                total_trades = len(final_df)
+                if total_trades > 0:
+                    wins = len(final_df[final_df['pl'] > 0])
+                    losses = len(final_df[final_df['pl'] <= 0])
+                    combined_summary['win_rate'] = (wins / total_trades) * 100
+                    
+                    winning_trades = final_df[final_df['pl'] > 0]
+                    losing_trades = final_df[final_df['pl'] <= 0]
+                    
+                    avg_loss = losing_trades['pl'].mean() if not losing_trades.empty else 0
+                    if not winning_trades.empty and avg_loss != 0:
+                        combined_summary['avg_rr_ratio'] = winning_trades['pl'].mean() / abs(avg_loss)
+                    else:
+                        combined_summary['avg_rr_ratio'] = 0
+                        
+                    if losses > 0:
+                        combined_summary['profit_factor'] = abs(winning_trades['pl'].sum() / losing_trades['pl'].sum())
+                    else:
+                        combined_summary['profit_factor'] = float('inf')
+                        
+                    if not winning_trades.empty:
+                        winning_hours = pd.to_datetime(winning_trades['entry_time']).dt.hour
+                        most_wins_hour = winning_hours.mode()[0] if not winning_hours.empty else None
+                        combined_summary['best_time_of_day'] = f"{int(most_wins_hour):02d}:00" if most_wins_hour is not None else "N/A"
+                    else:
+                        combined_summary['best_time_of_day'] = "N/A"
+                else:
+                    combined_summary['win_rate'] = 0
+                    combined_summary['avg_rr_ratio'] = 0
+                    combined_summary['profit_factor'] = 0
+                    combined_summary['best_time_of_day'] = "N/A"
+                
                 logger.info(f"\nFound {len(final_df)} trades total across {len(symbols_to_test)} symbols. Sending payload to GUI...")
                 # Format datetime column correctly for JSON dumping
                 if 'entry_time' in final_df.columns:
