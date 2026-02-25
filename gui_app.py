@@ -162,19 +162,22 @@ class AladinGUI(ctk.CTk):
         self.mt5_server_label.grid(row=2, column=0, padx=20, pady=(0, 2))
         
         self.mt5_time_label = ctk.CTkLabel(self.sidebar_frame, text="--:--:--", font=ctk.CTkFont(size=14, weight="bold"), text_color="#1f6aa5")
-        self.mt5_time_label.grid(row=3, column=0, padx=20, pady=(0, 20))
+        self.mt5_time_label.grid(row=3, column=0, padx=20, pady=(0, 2))
+        
+        self.mt5_date_label = ctk.CTkLabel(self.sidebar_frame, text="---", font=ctk.CTkFont(size=11), text_color="gray")
+        self.mt5_date_label.grid(row=4, column=0, padx=20, pady=(0, 20))
 
         # Control Buttons
         self.start_button = ctk.CTkButton(self.sidebar_frame, text="Start Bot Process", command=self.start_bot, fg_color="green", hover_color="darkgreen")
-        self.start_button.grid(row=4, column=0, padx=20, pady=10)
+        self.start_button.grid(row=5, column=0, padx=20, pady=10)
 
         self.stop_button = ctk.CTkButton(self.sidebar_frame, text="Stop Bot Process", command=self.stop_bot, fg_color="darkred", hover_color="red", state="disabled")
-        self.stop_button.grid(row=5, column=0, padx=20, pady=10)
+        self.stop_button.grid(row=6, column=0, padx=20, pady=10)
         
         # Trading Toggle Switch
-        ctk.CTkLabel(self.sidebar_frame, text="Trading Execution:", font=ctk.CTkFont(size=12, weight="bold")).grid(row=6, column=0, padx=20, pady=(20,0))
+        ctk.CTkLabel(self.sidebar_frame, text="Trading Execution:", font=ctk.CTkFont(size=12, weight="bold")).grid(row=7, column=0, padx=20, pady=(20,0))
         self.trading_switch = ctk.CTkSwitch(self.sidebar_frame, text="DISABLED", command=self.toggle_trading, onvalue="ENABLED", offvalue="DISABLED")
-        self.trading_switch.grid(row=7, column=0, padx=20, pady=10)
+        self.trading_switch.grid(row=8, column=0, padx=20, pady=10)
         # Default to Config state
         if CONFIG.get('trading_enabled', False):
             self.trading_switch.select()
@@ -1319,12 +1322,15 @@ class AladinGUI(ctk.CTk):
                 smooth_broker_unix = utc_now + self.broker_time_offset
                 broker_time = datetime.fromtimestamp(smooth_broker_unix, tz=timezone.utc)
                 self.mt5_time_label.configure(text=f"{broker_time.strftime('%H:%M:%S')}  |  {tz_string}")
+                self.mt5_date_label.configure(text=broker_time.strftime("%A, %b %d %Y"))
             else:
                 self.mt5_time_label.configure(text="Waiting for Sync...")
+                self.mt5_date_label.configure(text="---")
                 
         except Exception as e:
             self.mt5_server_label.configure(text="MT5 Error")
             self.mt5_time_label.configure(text="--:--:--")
+            self.mt5_date_label.configure(text="---")
             
         # Schedule next update in 1 second
         self.after(1000, self.update_mt5_time)
