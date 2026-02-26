@@ -44,14 +44,14 @@
     "max_daily_loss_count": 8,
     "max_daily_losses_per_symbol": -1.0,
     "max_daily_loss_count_per_symbol": 3,
-    "start": "2026-02-15",
+    "start": "2026-02-20",
     "end": "2026-02-23",
     "symbols": [
-        "AUDUSD",
-        "GBPUSD",
         "USDCAD",
+        "GBPUSD",
+        "AUDUSD",
         "EURUSD"
     ],
-    "symbol": "AUDUSD",
+    "symbol": "USDCAD",
     "trading_enabled": false
 }

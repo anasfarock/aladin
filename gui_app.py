@@ -656,7 +656,8 @@ class AladinGUI(ctk.CTk):
 
     def create_backtest_inputs(self, parent):
         parent.grid_columnconfigure(1, weight=1)
-        parent.grid_rowconfigure(5, weight=1) # The treeview row
+        parent.grid_rowconfigure(5, weight=1) # The graph row
+        parent.grid_rowconfigure(6, weight=1) # The treeview row
         
         ctk.CTkLabel(parent, text="Backtest Configuration", font=ctk.CTkFont(weight="bold")).grid(row=0, column=0, pady=(10,5), sticky="w", padx=10)
         self.create_input_row(parent, "Start Date (YYYY-MM-DD):", 'start', 1, str)
@@ -708,6 +709,12 @@ class AladinGUI(ctk.CTk):
         
         # We no longer need the generic text summary label since it's entirely visual now.
         # But we keep a hidden label or just rely on cards for updates.
+        
+        # Equity Curve Graph Frame
+        self.equity_graph_frame = ctk.CTkFrame(parent, fg_color="#2b2b2b", corner_radius=10)
+        self.equity_graph_frame.grid(row=5, column=0, columnspan=2, pady=5, padx=10, sticky="nsew")
+        self.equity_canvas = None
+        self.equity_fig = None
         
         # Add Treeview Table
         import tkinter.ttk as ttk
@@ -897,7 +904,9 @@ class AladinGUI(ctk.CTk):
         try:
             self.save_config(silent=True)
         except Exception as e:
-            self.log_message(f"Error saving config: {e}")
+            import traceback
+            error_str = traceback.format_exc()
+            self.log_message(f"Error saving config: {e}\n{error_str}")
 
     def create_risk_inputs(self, parent):
         self.create_input_row(parent, "Capital:", 'capital', 0, float)
@@ -1260,6 +1269,98 @@ class AladinGUI(ctk.CTk):
             self.lbl_wins.configure(text=str(wins), text_color="#51cf66")
             self.lbl_losses.configure(text=str(losses), text_color="#ff6b6b")
             
+        # Plot Equity Curve Graph
+        if trades_list:
+            import pandas as pd
+            import matplotlib.dates as mdates
+            from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+            
+            try:
+                df_trades = pd.DataFrame(trades_list)
+                if 'exit_time' in df_trades.columns:
+                    df_trades['exit_time_dt'] = pd.to_datetime(df_trades['exit_time'])
+                    df_trades = df_trades.sort_values(by='exit_time_dt').reset_index(drop=True)
+                    
+                    start_bal = summary.get('starting_balance', 2500.0)
+                    equity_curve = [start_bal]
+                    
+                    early_time = df_trades['entry_time'].iloc[0] if 'entry_time' in df_trades.columns and not df_trades.empty else summary.get('start_date', '2020-01-01')
+                    times = [pd.to_datetime(early_time)]
+                    
+                    current_bal = start_bal
+                    for _, t_row in df_trades.iterrows():
+                        current_bal += float(t_row.get('pl', 0))
+                        equity_curve.append(current_bal)
+                        times.append(t_row['exit_time_dt'])
+                        
+                    if self.equity_fig is not None:
+                        self.equity_fig.clear()
+                    else:
+                        from matplotlib.figure import Figure
+                        self.equity_fig = Figure(figsize=(8, 2.5), dpi=100)
+                        
+                    self.equity_fig.patch.set_facecolor('#2b2b2b')
+                    self.equity_ax = self.equity_fig.add_subplot(111)
+                    self.equity_ax.set_facecolor('#2b2b2b')
+                    
+                    # Fill under curve
+                    line, = self.equity_ax.plot(times, equity_curve, color='#51cf66', linewidth=2)
+                    self.equity_ax.fill_between(times, equity_curve, start_bal, where=[e >= start_bal for e in equity_curve], alpha=0.1, color='#51cf66')
+                    self.equity_ax.fill_between(times, equity_curve, start_bal, where=[e < start_bal for e in equity_curve], alpha=0.1, color='#ff6b6b')
+                    
+                    self.equity_ax.tick_params(colors='white', labelsize=8)
+                    self.equity_ax.spines['bottom'].set_color('gray')
+                    self.equity_ax.spines['top'].set_visible(False) 
+                    self.equity_ax.spines['right'].set_visible(False)
+                    self.equity_ax.spines['left'].set_color('gray')
+                    self.equity_ax.grid(True, linestyle='--', alpha=0.2, color='gray')
+                    self.equity_ax.set_ylabel('Equity ($)', color='gray', fontsize=9)
+                    
+                    self.equity_fig.autofmt_xdate()
+                    self.equity_fig.tight_layout()
+                    
+                    if self.equity_canvas is None:
+                        self.equity_canvas = FigureCanvasTkAgg(self.equity_fig, master=self.equity_graph_frame)
+                        self.equity_canvas.get_tk_widget().pack(fill="both", expand=True)
+                    else:
+                        self.equity_canvas.figure = self.equity_fig
+                        self.equity_fig.set_canvas(self.equity_canvas)
+                        
+                    self.equity_canvas.draw()
+                    
+                    # Hover interaction
+                    annot = self.equity_ax.annotate("", xy=(0,0), xytext=(15,15), textcoords="offset points",
+                                bbox=dict(boxstyle="round", fc="#1f538d", ec="none", alpha=0.9),
+                                arrowprops=dict(arrowstyle="->", color="white"), color="white", fontsize=8, fontweight="bold")
+                    annot.set_visible(False)
+                    
+                    def update_annot(ind):
+                        x, y = line.get_data()
+                        idx = ind["ind"][0]
+                        annot.xy = (x[idx], y[idx])
+                        dt_val = mdates.num2date(x[idx]).strftime('%m/%d %H:%M')
+                        bal_val = y[idx]
+                        annot.set_text(f"{dt_val}\nBal: ${bal_val:.2f}")
+
+                    def hover(event):
+                        vis = annot.get_visible()
+                        if event.inaxes == self.equity_ax:
+                            cont, ind = line.contains(event)
+                            if cont:
+                                update_annot(ind)
+                                annot.set_visible(True)
+                                self.equity_canvas.draw_idle()
+                            else:
+                                if vis:
+                                    annot.set_visible(False)
+                                    self.equity_canvas.draw_idle()
+                                    
+                    self.equity_canvas.mpl_connect("motion_notify_event", hover)
+            except Exception as e:
+                import traceback
+                error_str = traceback.format_exc()
+                self.log_message(f"Error drawing equity curve: {e}\n{error_str}")
+
         else:
             if hasattr(self, 'lbl_winrate'):
                 self.lbl_winrate.configure(text="-", text_color="white")
