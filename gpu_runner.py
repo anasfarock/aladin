@@ -298,8 +298,8 @@ def backtest_gpu_runner(symbol, start, end, timeframe):
         if not can_trade:
             continue
             
-        # 4. Check Max Concurrent Trades
-        if len(active_positions) >= CONFIG['max_concurrent_trades']:
+        # 4. Check Max Concurrent Trades (Per-Symbol basis at this engine level)
+        if len(active_positions) >= CONFIG.get('max_concurrent_trades_of_same_pair', 4):
             continue
             
         # 5. Take the trade

@@ -582,17 +582,46 @@ def main():
                 final_df = pd.concat(all_trades, ignore_index=True)
                 final_df = final_df.sort_values(by='entry_time').reset_index(drop=True)
                 
-                # Recalculate combined stats
+                # Apply Global Cross-Symbol Concurrency Limit
+                global_max = CONFIG.get('max_concurrent_trades', 8)
+                active_exits = []
+                filtered_trades = []
+                
+                for _, trade in final_df.iterrows():
+                    entry_t = pd.to_datetime(trade['entry_time'])
+                    exit_t = pd.to_datetime(trade['exit_time'])
+                    
+                    # Remove pairs that closed before or precisely upon this entry
+                    active_exits = [et for et in active_exits if et > entry_t]
+                    
+                    if len(active_exits) >= global_max:
+                        continue # Dropped by global portfolio limit
+                    
+                    active_exits.append(exit_t)
+                    filtered_trades.append(trade)
+                
+                if filtered_trades:
+                    final_df = pd.DataFrame(filtered_trades).reset_index(drop=True)
+                else:
+                    final_df = pd.DataFrame(columns=final_df.columns)
+                
+                # Recalculate explicitly from the global-filtered trades df
+                combined_summary['total_profit'] = final_df['pl'].sum() if not final_df.empty else 0.0
+                combined_summary['total_trades'] = len(final_df)
+                total_trades = len(final_df)
+                
                 combined_summary['ending_balance'] = combined_summary['starting_balance'] + combined_summary['total_profit']
                 
-                total_trades = len(final_df)
                 if total_trades > 0:
-                    wins = len(final_df[final_df['pl'] > 0])
-                    losses = len(final_df[final_df['pl'] <= 0])
-                    combined_summary['win_rate'] = (wins / total_trades) * 100
-                    
                     winning_trades = final_df[final_df['pl'] > 0]
                     losing_trades = final_df[final_df['pl'] <= 0]
+                    
+                    wins = len(winning_trades)
+                    losses = len(losing_trades)
+                    
+                    combined_summary['wins'] = wins
+                    combined_summary['losses'] = losses
+                    combined_summary['win_rate'] = (wins / total_trades) * 100
                     
                     avg_loss = losing_trades['pl'].mean() if not losing_trades.empty else 0
                     if not winning_trades.empty and avg_loss != 0:

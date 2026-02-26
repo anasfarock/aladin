@@ -47,11 +47,11 @@
     "start": "2026-02-15",
     "end": "2026-02-23",
     "symbols": [
-        "EURUSD",
-        "USDCAD",
+        "AUDUSD",
         "GBPUSD",
-        "AUDUSD"
+        "USDCAD",
+        "EURUSD"
     ],
-    "symbol": "EURUSD",
+    "symbol": "AUDUSD",
     "trading_enabled": false
 }
