@@ -1334,26 +1334,36 @@ class AladinGUI(ctk.CTk):
                                 arrowprops=dict(arrowstyle="->", color="white"), color="white", fontsize=8, fontweight="bold")
                     annot.set_visible(False)
                     
-                    def update_annot(ind):
+                    def update_annot(idx):
                         x, y = line.get_data()
-                        idx = ind["ind"][0]
                         annot.xy = (x[idx], y[idx])
-                        dt_val = mdates.num2date(x[idx]).strftime('%m/%d %H:%M')
+                        try:
+                            dt_val = mdates.num2date(x[idx]).strftime('%m/%d %H:%M')
+                        except Exception:
+                            dt_val = ""
                         bal_val = y[idx]
                         annot.set_text(f"{dt_val}\nBal: ${bal_val:.2f}")
 
                     def hover(event):
                         vis = annot.get_visible()
                         if event.inaxes == self.equity_ax:
-                            cont, ind = line.contains(event)
-                            if cont:
-                                update_annot(ind)
+                            import numpy as np
+                            import matplotlib.dates as mdates
+                            x, y = line.get_data()
+                            if event.xdata is not None:
+                                try:
+                                    x_floats = mdates.date2num(x)
+                                except Exception:
+                                    x_floats = x
+                                    
+                                idx = (np.abs(x_floats - event.xdata)).argmin()
+                                update_annot(idx)
                                 annot.set_visible(True)
                                 self.equity_canvas.draw_idle()
-                            else:
-                                if vis:
-                                    annot.set_visible(False)
-                                    self.equity_canvas.draw_idle()
+                        else:
+                            if vis:
+                                annot.set_visible(False)
+                                self.equity_canvas.draw_idle()
                                     
                     self.equity_canvas.mpl_connect("motion_notify_event", hover)
             except Exception as e:
