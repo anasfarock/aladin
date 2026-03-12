@@ -2,7 +2,11 @@ import pandas as pd
 import numpy as np
 import logging
 from datetime import datetime, timedelta
-import torch
+try:
+    import torch
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
 
 from config import CONFIG
 from mt5_handler import fetch_mt5_df
@@ -234,23 +238,66 @@ def backtest_gpu_runner(symbol, start, end, timeframe):
         logger.info("No valid setups found.")
         return pd.DataFrame(), None
         
-    logger.info(f"Extracted {len(potential_trades)} potential entries. Sending to PyTorch GPU block...")
-    
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    logger.info(f"Executing Vectorized Batch on Device: {device}")
-    
-    h_t = torch.tensor(df['high'].values, dtype=torch.float32, device=device)
-    l_t = torch.tensor(df['low'].values, dtype=torch.float32, device=device)
-    c_t = torch.tensor(df['close'].values, dtype=torch.float32, device=device)
-    
-    p_entry_idx = [t['entry_idx'] for t in potential_trades]
-    p_sides = torch.tensor([t['side'] for t in potential_trades], dtype=torch.float32, device=device)
-    p_entry_prices = torch.tensor([t['entry'] for t in potential_trades], dtype=torch.float32, device=device)
-    p_tps = torch.tensor([t['tp'] for t in potential_trades], dtype=torch.float32, device=device)
-    p_sls = torch.tensor([t['stop'] for t in potential_trades], dtype=torch.float32, device=device)
-    p_units = torch.ones_like(p_sides) # Placeholder for units, calculated later based on equity
-    
-    raw_exits = evaluate_exits_gpu(h_t, l_t, c_t, p_entry_idx, p_entry_prices, p_sides, p_tps, p_sls, p_units)
+    logger.info(f"Extracted {len(potential_trades)} potential entries. Sending to evaluation block...")
+
+    if TORCH_AVAILABLE:
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        logger.info(f"Executing Vectorized Batch on Device: {device}")
+        
+        h_t = torch.tensor(df['high'].values, dtype=torch.float32, device=device)
+        l_t = torch.tensor(df['low'].values, dtype=torch.float32, device=device)
+        c_t = torch.tensor(df['close'].values, dtype=torch.float32, device=device)
+        
+        p_entry_idx = [t['entry_idx'] for t in potential_trades]
+        p_sides = torch.tensor([t['side'] for t in potential_trades], dtype=torch.float32, device=device)
+        p_entry_prices = torch.tensor([t['entry'] for t in potential_trades], dtype=torch.float32, device=device)
+        p_tps = torch.tensor([t['tp'] for t in potential_trades], dtype=torch.float32, device=device)
+        p_sls = torch.tensor([t['stop'] for t in potential_trades], dtype=torch.float32, device=device)
+        p_units = torch.ones_like(p_sides)
+        
+        raw_exits = evaluate_exits_gpu(h_t, l_t, c_t, p_entry_idx, p_entry_prices, p_sides, p_tps, p_sls, p_units)
+    else:
+        # CPU-only fallback (numpy) when torch is not installed
+        logger.info("PyTorch not available — running CPU numpy fallback evaluation.")
+        h_np = df['high'].values.astype(np.float32)
+        l_np = df['low'].values.astype(np.float32)
+        c_np = df['close'].values.astype(np.float32)
+        
+        p_entry_idx = [t['entry_idx'] for t in potential_trades]
+        trailing_step = CONFIG.get('trailing_step', 0.001)
+        use_trailing = CONFIG.get('trailing_stop', True)
+        
+        raw_exits = []
+        for i, t in enumerate(potential_trades):
+            e_idx = min(int(p_entry_idx[i]), len(h_np) - 1)
+            h = h_np[e_idx:]; l = l_np[e_idx:]; c = c_np[e_idx:]
+            if len(c) == 0:
+                raw_exits.append({'exit_idx': e_idx, 'exit_price': t['entry'], 'exit_reason': 'no_data', 'pl': 0.0})
+                continue
+            side = t['side']; ep = t['entry']; tp = t['tp']; sl = t['stop']
+            exit_bar = len(c) - 1; exit_price = c[-1]; exit_reason = 'end_of_data'
+            for j in range(len(c)):
+                if use_trailing:
+                    if side == 1:
+                        run_max = np.maximum.accumulate(c[:j+1])[-1]
+                        dyn_sl = run_max - trailing_step if run_max >= ep + trailing_step else sl
+                    else:
+                        run_min = np.minimum.accumulate(c[:j+1])[-1]
+                        dyn_sl = run_min + trailing_step if run_min <= ep - trailing_step else sl
+                else:
+                    dyn_sl = sl
+                if side == 1:
+                    if h[j] >= tp:
+                        exit_bar = j; exit_price = tp; exit_reason = 'take_profit'; break
+                    if l[j] <= dyn_sl:
+                        exit_bar = j; exit_price = dyn_sl; exit_reason = 'stop_loss' if not use_trailing else 'trailing_stop'; break
+                else:
+                    if l[j] <= tp:
+                        exit_bar = j; exit_price = tp; exit_reason = 'take_profit'; break
+                    if h[j] >= dyn_sl:
+                        exit_bar = j; exit_price = dyn_sl; exit_reason = 'stop_loss' if not use_trailing else 'trailing_stop'; break
+            pl = (exit_price - ep) * side
+            raw_exits.append({'exit_idx': e_idx + exit_bar, 'exit_price': float(exit_price), 'exit_reason': exit_reason, 'pl': float(pl)})
     
     # Merge GPU exits with trade metadata
     for i, t in enumerate(potential_trades):

@@ -1063,8 +1063,8 @@ class AladinGUI(ctk.CTk):
         self.is_running = True
         self.log_message("\n--- STARTING BACKTEST ---\n")
         
-        # Run main.py with --backtest argument
-        cmd = [sys.executable, "-u", "main.py", "--backtest"]
+        # Build command - when frozen as EXE, use sibling AladinBot.exe
+        cmd = self._get_bot_command(["--backtest"])
         
         try:
             if os.name == 'nt':
@@ -1093,6 +1093,25 @@ class AladinGUI(ctk.CTk):
             self.log_message(f"Failed to start backtest process: {e}")
             self.stop_bot_ui_cleanup()
 
+    def _get_bot_command(self, args):
+        """Return the correct command to launch the bot backend.
+        When running as a frozen PyInstaller EXE, sys.executable points to
+        Aladin.exe itself. In that case, look for a sibling AladinBot.exe.
+        """
+        import sys, os
+        if getattr(sys, 'frozen', False):
+            # We are in a frozen bundle - find AladinBot.exe next to Aladin.exe
+            exe_dir = os.path.dirname(sys.executable)
+            bot_exe = os.path.join(exe_dir, 'AladinBot.exe')
+            if os.path.exists(bot_exe):
+                return [bot_exe] + args
+            else:
+                self.log_message("ERROR: AladinBot.exe not found next to Aladin.exe!")
+                raise FileNotFoundError("AladinBot.exe not found")
+        else:
+            # Running from source - invoke Python directly
+            return [sys.executable, "-u", "main.py"] + args
+
     def start_bot(self):
         if self.is_running:
             return
@@ -1106,8 +1125,8 @@ class AladinGUI(ctk.CTk):
         self.is_running = True
         self.log_message("\n--- STARTING BOT ---\n")
         
-        # Run main.py with --live argument
-        cmd = [sys.executable, "-u", "main.py", "--live"]
+        # Build command - when frozen as EXE, use sibling AladinBot.exe
+        cmd = self._get_bot_command(["--live"])
         
         try:
             # Use separate process group on windows to ensure clean kill

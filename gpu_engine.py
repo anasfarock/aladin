@@ -1,4 +1,8 @@
-import torch
+try:
+    import torch
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
 import pandas as pd
 import numpy as np
 import logging
