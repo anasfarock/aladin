@@ -1,6 +1,6 @@
 # 🧞 Aladin Trading Bot
 
-An advanced, modular MetaTrader 5 (MT5) trading bot implementing the **ICT (Inner Circle Trader) Fibonacci strategy** with multi-timeframe trend analysis, ADX filtering, macro analysis, and a full-featured GUI control panel.
+An advanced, modular MetaTrader 5 (MT5) trading bot implementing strategy with multi-timeframe trend analysis, ADX filtering, macro analysis, and a full-featured GUI control panel.
 
 ---
 
